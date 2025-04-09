@@ -1,6 +1,5 @@
 """Functionality for simulating observations of random variables."""
 
-from collections.abc import Callable, Iterable
 from typing import Union
 
 import numpy as np
@@ -42,7 +41,7 @@ if __name__ == "__main__":
     # Homoscedastic noise:
     fig, ax = plt.subplots()
     ax.plot(x, signal, color="r", linewidth=2, label="clean signal")
-    for _ in range(3):
+    for _ in range(5):
         ax.plot(
             x,
             add_read_noise(
@@ -60,13 +59,12 @@ if __name__ == "__main__":
     # Heteroscedastic noise:
     fig, ax = plt.subplots()
     ax.plot(x, signal, color="r", linewidth=2, label="clean signal")
-    noise_func = lambda x: np.sin(2.0 * np.pi * x)
-    for _ in range(3):
+    for _ in range(5):
         ax.plot(
             x,
             add_read_noise(
                 signal=signal,
-                sigma=noise_func(x),
+                sigma=0.1 + 0.1 * (1.0 + np.sin(2.0 * np.pi * x)),
             ),
             color="k",
             alpha=0.2,

@@ -9,7 +9,13 @@ import numpy as np
 def polynomial(
     x: Union[float, np.array], order: int = 1, coefficients: Iterable = [0.0, 1.0]
 ) -> Union[float, np.array]:
-    """Basic polynomial."""
+    """Basic polynomial.
+
+    Args:
+        x: Points at which to evaluate the polynomial.
+        order: Order of the polynomial.
+        coefficients: Polynomial coefficients in ascending order.
+    """
     return np.sum([c * (x**n) for c, n in zip(coefficients, range(order + 1))], axis=0)
 
 
