@@ -28,7 +28,7 @@ def gaussian_blobs(
     if len(sigma) != len(mu):
         sigma = sigma * np.ones_like(mu)
     if isinstance(amplitude, float):
-        amplitude = amplitude * np.ones_like(mu)
+        amplitude = amplitude * np.ones(mu.shape[0])
 
     # Compute output image.
     y = np.arange(im_size[0]) - im_size[0] / 2 + 0.5
@@ -36,9 +36,14 @@ def gaussian_blobs(
     out = np.zeros(im_size)
     for n in range(len(mu)):
         out += (
-            amplitude[n]
-            * scipy.stats.norm.pdf(y, loc=mu[n][0], scale=sigma[n][0])[:, None]
-            @ scipy.stats.norm.pdf(x, loc=mu[n][1], scale=sigma[n][1])[None, :]
+            2.0
+            * np.pi
+            * np.prod(sigma[n])
+            * amplitude[n]
+            * (
+                scipy.stats.norm.pdf(y, loc=mu[n][0], scale=sigma[n][0])[:, None]
+                @ scipy.stats.norm.pdf(x, loc=mu[n][1], scale=sigma[n][1])[None, :]
+            )
         )
 
     return out
@@ -56,3 +61,11 @@ if __name__ == "__main__":
     fig, ax = plt.subplots()
     plt.imshow(im, cmap="gray", extent=([-3.5, 3.5, 3.5, -3.5]))
     plt.show()
+
+    im = gaussian_blobs(
+        mu=np.array([[0.0, 0.0]]),
+        sigma=np.array([[1.0, 1.0]]),
+        amplitude=np.array([1.0]),
+        im_size=(8, 8),
+    )
+    print(im.max())
