@@ -103,7 +103,7 @@ class Linear(BayesianLayer):
                         scale=1.0 / in_features,
                     ),
                     dist.Normal(
-                        loc=torch.zeros_like(self._weight_params[1]),
+                        loc=-5.0 * torch.ones_like(self._weight_params[1]),
                         scale=1.0 / in_features,
                     ),
                 ),
@@ -113,7 +113,7 @@ class Linear(BayesianLayer):
                         scale=1.0 / out_features,
                     ),
                     dist.Normal(
-                        loc=torch.zeros_like(self._bias_params[1]),
+                        loc=-5.0 * torch.ones_like(self._bias_params[1]),
                         scale=1.0 / out_features,
                     ),
                 ),
