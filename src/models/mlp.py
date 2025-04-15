@@ -1,7 +1,5 @@
 """Simple MLP PyTorch models."""
 
-from collections.abc import Callable
-
 import torch
 
 
@@ -13,12 +11,13 @@ class MLP(torch.nn.Module):
         in_features: int,
         out_features: int,
         hidden_features: int = 128,
-        n_layers: int = 2,
-        activation: Callable = torch.nn.LeakyReLU(),
+        n_layers: int = 3,
+        activation: type = torch.nn.LeakyReLU,
     ):
         super().__init__()
         modules = [
-            torch.nn.Linear(in_features=in_features, out_features=hidden_features)
+            torch.nn.Linear(in_features=in_features, out_features=hidden_features),
+            activation(),
         ]
         for _ in range(n_layers - 2):
             modules.append(
@@ -26,7 +25,7 @@ class MLP(torch.nn.Module):
                     in_features=hidden_features, out_features=hidden_features
                 )
             )
-            modules.append(activation)
+            modules.append(activation())
         modules.append(
             torch.nn.Linear(in_features=hidden_features, out_features=out_features)
         )
