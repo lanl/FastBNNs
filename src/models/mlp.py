@@ -40,6 +40,8 @@ class MLP(torch.nn.Module):
 
 if __name__ == "__main__":
     # Basic MLP usage example.
-    network = MLP(in_features=1, out_features=1)
+    in_features = 1
+    out_features = 1
+    network = MLP(in_features=in_features, out_features=out_features)
     batch_size = 8
-    out = network(torch.ones((batch_size, 1)))
+    out = network(torch.ones((batch_size, in_features)))
