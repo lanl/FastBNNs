@@ -5,7 +5,8 @@ from typing import Any
 
 import torch
 
-import bnn.layers
+from bnn.layers import BayesianLayer, ForwardPassMean
+import bnn.inference
 
 
 # Define available Bayesian layers.
@@ -14,7 +15,7 @@ BAYESIAN_LAYERS = ("Linear", "Conv2d")
 
 def convert_to_bnn_(
     model: torch.nn.Module,
-    bayesian_layer_kwargs: dict = {"deterministic": True},
+    bayesian_layer_kwargs: dict = {},
 ):
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -43,16 +44,20 @@ def convert_to_bnn_(
         layer = model.get_submodule(leaf)
         layer_name = layer.__class__.__name__
         if layer_name in BAYESIAN_LAYERS:
+            # Search for a good default moment propagator.
+            if "moment_propagator" not in bayesian_layer_kwargs.keys():
+                if hasattr(bnn.inference, layer_name):
+                    propagator = getattr(bnn.inference, layer_name)
+                    bayesian_layer_kwargs["moment_propagator"] = propagator()
+
             # Create Bayesian version of this layer.
-            bayesian_layer = getattr(bnn.layers, layer_name).init_from(
-                layer, **bayesian_layer_kwargs
-            )
+            bayesian_layer = BayesianLayer(module=layer, **bayesian_layer_kwargs)
 
             # Replace module with Bayesian version.
             model.set_submodule(leaf, bayesian_layer)
         else:
             # Use generic mean passthrough layer for compatibility with Bayesian layers.
-            passthrough_layer = bnn.layers.ForwardPassMean(layer=layer)
+            passthrough_layer = ForwardPassMean(layer=layer)
             model.set_submodule(leaf, passthrough_layer)
 
 

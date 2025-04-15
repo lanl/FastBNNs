@@ -1,4 +1,10 @@
-"""Inference modules for Bayesian neural network layers."""
+"""Inference modules for Bayesian neural network layers.
+
+Custom propagators for specific layers (e.g., "Linear" for Bayesian analog of
+torch.nn.Linear) should share a name with the layer such that
+getattr(inference, layer.__class__.__name__) will return the custom propagator
+for that layer if available.
+"""
 
 from typing import Union
 
@@ -89,7 +95,7 @@ class MonteCarlo(MomentPropagator):
         return samples.mean(dim=0), samples.var(dim=0)
 
 
-class PropagateLinear(MomentPropagator):
+class Linear(MomentPropagator):
     """Deterministic moment propagation of mean, variance through a Linear layer."""
 
     def __init__(self):
@@ -112,20 +118,20 @@ class PropagateLinear(MomentPropagator):
         # https://doi.org/10.48550/arXiv.2402.14532
         mu = torch.nn.functional.linear(
             input=input_mu,
-            weight=module._layer_params["weight"][0],
+            weight=module._module_params["weight"][0],
             bias=(
                 None
-                if module._layer_params["bias"] is None
-                else module._layer_params["bias"][0]
+                if module._module_params["bias"] is None
+                else module._module_params["bias"][0]
             ),
         )
         var = torch.nn.functional.linear(
             input=input_mu**2,
-            weight=module.var_tform(module._layer_params["weight"][1]),
+            weight=module.var_tform(module._module_params["weight"][1]),
             bias=(
                 None
-                if module._layer_params["bias"] is None
-                else module.var_tform(module._layer_params["bias"][1])
+                if module._module_params["bias"] is None
+                else module.var_tform(module._module_params["bias"][1])
             ),
         )
 
@@ -133,8 +139,8 @@ class PropagateLinear(MomentPropagator):
         if input_var is not None:
             var += torch.nn.functional.linear(
                 input=input_var,
-                weight=module._layer_params["weight"][0] ** 2
-                + module.var_tform(module._layer_params["weight"][1]),
+                weight=module._module_params["weight"][0] ** 2
+                + module.var_tform(module._module_params["weight"][1]),
                 bias=None,
             )
 
