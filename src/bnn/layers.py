@@ -7,6 +7,7 @@ import torch
 import torch.distributions as dist
 
 from bnn.inference import MomentPropagator, MonteCarlo, Linear
+from utils.misc import get_torch_functional
 
 
 class BayesianLayer(torch.nn.Module):
@@ -17,7 +18,7 @@ class BayesianLayer(torch.nn.Module):
         module: torch.nn.Module,
         samplers: dict = None,
         samplers_init: dict = None,
-        moment_propagator: MomentPropagator = None,
+        moment_propagator: MomentPropagator = MonteCarlo(n_samples=10),
         propagate_moments: bool = True,
     ):
         """BayesianLayer initializer.
@@ -52,12 +53,11 @@ class BayesianLayer(torch.nn.Module):
 
         # Validate `module` compatability with this class and find associated
         # functional from torch.nn.functional.
-        assert hasattr(
-            torch.nn.functional, module.__class__.__name__.lower()
+        functional = get_torch_functional(module.__class__)
+        assert (
+            functional is not None
         ), "`module` must have a functional version in torch.nn.functional to use this class!"
-        self.functional = getattr(
-            torch.nn.functional, module.__class__.__name__.lower()
-        )
+        self.functional = functional
 
         # Set moment propagator.
         self.propagate_moments = propagate_moments
@@ -153,7 +153,7 @@ class BayesianLayer(torch.nn.Module):
 class ForwardPassMean(torch.nn.Module):
     """General layer wrapper that passes mean as input and ignores variance."""
 
-    def __init__(self, layer: torch.nn.Module):
+    def __init__(self, module: torch.nn.Module):
         """Initializer for ForwardPassMean wrapper.
 
         This module is designed to wrap modules whose forward call accepts a
@@ -161,14 +161,14 @@ class ForwardPassMean(torch.nn.Module):
         wrapped module in a BNN whose forward pass through each layer instead
         accepts and returns two tensors corresponding to mean and variance.
         For example, if out = layer(input), then
-        layer_w = ForwardPassMean(layer=layer) can be called as out_w = layer_w(input, Any)
+        layer_w = ForwardPassMean(module=module) can be called as out_w = layer_w(input, Any)
         with out_w[0] == out
 
         Args:
             layer: Layer to be wrapped to accomodate two input forward pass.
         """
         super().__init__()
-        self.layer = layer
+        self.layer = module
 
     def forward(
         self, input_mu: Union[tuple, torch.tensor], input_var: torch.tensor = None

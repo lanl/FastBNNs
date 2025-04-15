@@ -74,23 +74,25 @@ class MonteCarlo(MomentPropagator):
         if isinstance(input_mu, tuple):
             input_mu, input_var = input_mu
 
+        # Temporarily turn off moment propagation in module to avoid recursion.
+        if hasattr(module, "propagate_moments"):
+            propagate_moments_init = module.propagate_moments
+            module.propagate_moments = False
+
         # Compute forward passes.
         if input_var is None:
-            # Turn off moment propagation in module and compute forward passes.
-            if hasattr(module, "propagate_moments"):
-                propagate_moments_init = module.propagate_moments
-                module.propagate_moments = False
             samples = torch.stack([module(input_mu)[0] for _ in range(self.n_samples)])
-
-            # Restore initial setting of `propagate_moments` (this may always be
-            # be True but using initial state to account for custom use cases).
-            if hasattr(module, "propagate_moments"):
-                module.propagate_moments = propagate_moments_init
         else:
+            # If input_var is provided, we also need to sample the input distribution.
             input_dist = self.input_sampler(loc=input_mu, scale=input_var.sqrt())
             samples = torch.stack(
-                [module(input_dist.sample()) for _ in range(self.n_samples)]
+                [module(input_dist.sample())[0] for _ in range(self.n_samples)]
             )
+
+        # Restore initial setting of `propagate_moments` (this may always be
+        # be True but using initial state to account for custom use cases).
+        if hasattr(module, "propagate_moments"):
+            module.propagate_moments = propagate_moments_init
 
         return samples.mean(dim=0), samples.var(dim=0)
 

@@ -22,7 +22,7 @@ model = mlp.MLP(
     out_features=out_features,
     n_layers=n_layers,
     hidden_features=hidden_features,
-    activation=torch.nn.LeakyReLU(),
+    activation=torch.nn.LeakyReLU,
 )
 nn_to_bnn.convert_to_bnn_(model=model)
 device = torch.device("cuda")
