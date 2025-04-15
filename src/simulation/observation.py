@@ -30,7 +30,7 @@ def sensor_noise(
         sigma: Standard deviation of zero mean Normally distributed read noise. Can be
             homoscedastic (scalar) or heteroscedastic (array matching len(signal)).
     """
-    return np.random.poisson(add_read_noise(signal=signal, sigma=sigma))
+    return add_read_noise(signal=np.random.poisson(signal), sigma=sigma)
 
 
 class NoiseTransform(torch.nn.Module):
