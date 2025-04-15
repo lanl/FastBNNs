@@ -31,8 +31,11 @@ class SimulatedData(torch.utils.data.Dataset):
 
     def __getitem__(self, idx: int):
         data_dict = self.data_generator()
+        data_dict["input"]["x"] = data_dict["input"]["x"].float()
+        data_dict["output"] = data_dict["output"].float()
         if self.transform is not None:
             data_dict["output"] = self.transform(data_dict["output"])
+
         return data_dict
 
 
@@ -57,10 +60,12 @@ if __name__ == "__main__":
     simulator_kwargs = {"mu": np.array([[]])}
     noise_tform = observation.NoiseTransform(
         noise_fxn=observation.add_read_noise,
-        noise_fxn_kwargs={"sigma": 0.0},
+        noise_fxn_kwargs={"sigma": 0.1},
     )
     n_data = 3
-    ds = SimulatedData(data_generator=data_generator, dataset_length=n_data)
+    ds = SimulatedData(
+        data_generator=data_generator, dataset_length=n_data, transform=noise_tform
+    )
     for n in range(n_data):
         data = ds[n]
         fig, ax = plt.subplots()

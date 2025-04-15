@@ -61,9 +61,7 @@ class NoiseTransform(torch.nn.Module):
         self.noise_fxn_kwargs = noise_fxn_kwargs
         self.noise_fxn_kwargs_generator = noise_fxn_kwargs_generator
 
-    def forward(
-        self, x: Union[np.array, torch.tensor]
-    ) -> Union[np.array, torch.tensor]:
+    def forward(self, x: torch.tensor) -> torch.tensor:
         """Forward pass to generate noisy `x`."""
         # Generate x-dependent arguments and merge with noise_fxn_kwargs.
         generated_kwargs = {
@@ -78,7 +76,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import polynomials
 
-    x = np.linspace(-1.0, 1.0, 100)
+    x = torch.linspace(-1.0, 1.0, 100)
     signal = polynomials.polynomial(x, order=1, coefficients=[0.0, 1.0])
 
     # Homoscedastic noise:
