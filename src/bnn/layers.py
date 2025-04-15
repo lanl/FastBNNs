@@ -1,5 +1,6 @@
 """Collections of Bayesian neural network layers."""
 
+import copy
 from typing import Any, Union
 
 import numpy as np
@@ -7,23 +8,22 @@ import torch
 import torch.distributions as dist
 from torch.nn.parameter import Parameter
 
+from bnn.inference import MomentPropagator, MonteCarlo, PropagateLinear
+
 
 class BayesianLayer(torch.nn.Module):
     """Base class for Bayesian layers."""
 
-    def __init__(
-        self,
-        deterministic: bool = True,
-    ):
+    def __init__(self, propagate_moments: bool = True):
         """BayesianLayer initializer.
 
         Args:
-            deterministic: Flag indicating forward pass should compute the mean
+            propagate_moments: Flag indicating forward pass should compute the mean
                 and variance determinstically (i.e., from parameter means and
                 variances without random sampling).
         """
         super().__init__()
-        self.deterministic = deterministic
+        self.propagate_moments = propagate_moments
 
     @staticmethod
     def init_from(layer: torch.nn.Module, **kwargs) -> Any:
@@ -54,6 +54,7 @@ class Linear(BayesianLayer):
         dtype: torch.dtype = None,
         samplers: dict = None,
         samplers_init: dict = None,
+        moment_propagator: MomentPropagator = PropagateLinear(),
         **kwargs,
     ):
         """Initializer for Bayesian Linear class.
@@ -78,42 +79,51 @@ class Linear(BayesianLayer):
                 parameters (e.g., samplers_init["weight"][0].sample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).
+            moment_propagator: Propagation module to propagate mean and variance
+                through this layer.
             kwargs: Additional keyword arguments passed to parent class.
         """
         super().__init__(**kwargs)
 
-        # Define layer parameters.
+        # Set moment propagator.
+        self.moment_propagator = moment_propagator
+
+        # Define layer parameters (dimension 2 corresponds to mean and variance).
         factory_kwargs = {"device": device, "dtype": dtype}
-        self._weight_params = Parameter(
-            torch.empty((2, out_features, in_features), **factory_kwargs)
-        )  # (mean, variance)
+        layer_params = torch.nn.ParameterDict(
+            {
+                "weight": Parameter(
+                    torch.empty((2, out_features, in_features), **factory_kwargs)
+                ),
+                "bias": Parameter(None),
+            }
+        )
         if bias:
-            self._bias_params = Parameter(
+            layer_params["bias"] = Parameter(
                 torch.empty((2, out_features), **factory_kwargs)
-            )  # (mean, variance)
-        else:
-            self._bias_params = self.register_parameter("_bias_params", None)
+            )
+        self._layer_params = layer_params
 
         # Initialize parameters.
         if samplers_init is None:
             samplers_init = {
                 "weight": (
                     dist.Normal(
-                        loc=torch.zeros_like(self._weight_params[0]),
+                        loc=torch.zeros_like(layer_params["weight"][0]),
                         scale=1.0 / in_features,
                     ),
                     dist.Normal(
-                        loc=-5.0 * torch.ones_like(self._weight_params[1]),
+                        loc=-5.0 * torch.ones_like(layer_params["weight"][1]),
                         scale=1.0 / in_features,
                     ),
                 ),
                 "bias": (
                     dist.Normal(
-                        loc=torch.zeros_like(self._bias_params[0]),
+                        loc=torch.zeros_like(layer_params["bias"][0]),
                         scale=1.0 / out_features,
                     ),
                     dist.Normal(
-                        loc=-5.0 * torch.ones_like(self._bias_params[1]),
+                        loc=-5.0 * torch.ones_like(layer_params["bias"][1]),
                         scale=1.0 / out_features,
                     ),
                 ),
@@ -127,22 +137,19 @@ class Linear(BayesianLayer):
         if samplers is None:
             samplers = {"weight": dist.Normal, "bias": dist.Normal}
         for key, value in samplers.items():
-            params = getattr(self, f"_{key}_params")
-            samplers[key] = value(loc=params[0], scale=torch.sqrt(var_tform(params[1])))
+            samplers[key] = value(
+                loc=layer_params[key][0],
+                scale=torch.sqrt(var_tform(layer_params[key][1])),
+            )
         self.samplers = samplers
 
     @property
-    def weight(self):
-        """Return a sample from the `weight` sampler distribution."""
-        return self.samplers["weight"].sample()
-
-    @property
-    def bias(self):
-        """Return a sample from the `bias` sampler distribution."""
-        if self._bias_params is None:
-            return None
-        else:
-            return self.samplers["bias"].sample()
+    def layer_params(self):
+        """Return a sample of this layer's parameters."""
+        return {
+            key: None if self._layer_params[key] is None else value.sample()
+            for key, value in self.samplers.items()
+        }
 
     @staticmethod
     def init_from(layer: torch.nn.Module, **kwargs) -> Any:
@@ -156,12 +163,12 @@ class Linear(BayesianLayer):
         )
 
     def reset_parameters(self) -> None:
-        """Resample layer parameters."""
-        self._weight_params.data = torch.stack(
+        """Resample layer parameters from initial distributions."""
+        self._layer_params["weight"].data = torch.stack(
             [sampler.sample() for sampler in self.samplers_init["weight"]]
         )
-        if self._bias_params is not None:
-            self._bias_params.data = torch.stack(
+        if self._layer_params["bias"] is not None:
+            self._layer_params["bias"].data = torch.stack(
                 [sampler.sample() for sampler in self.samplers_init["bias"]]
             )
 
@@ -176,36 +183,14 @@ class Linear(BayesianLayer):
         if isinstance(input_mu, tuple):
             input_mu, input_var = input_mu
 
-        # Pass input through layer.
-        if self.deterministic:
-            # Compute analytical result under mean-field approximation following
-            # https://doi.org/10.48550/arXiv.2402.14532
-            mu = torch.nn.functional.linear(
-                input=input_mu, weight=self._weight_params[0], bias=self._bias_params[0]
+        # Propagate mean and variance through layer.
+        if self.propagate_moments:
+            mu, var = self.moment_propagator(
+                module=self, input_mu=input_mu, input_var=input_var
             )
-            var = torch.nn.functional.linear(
-                input=input_mu**2,
-                weight=self.var_tform(self._weight_params[1]),
-                bias=(
-                    None
-                    if self._bias_params is None
-                    else self.var_tform(self._bias_params[1])
-                ),
-            )
-
-            # Add input variance contribution.
-            if input_var is not None:
-                var += torch.nn.functional.linear(
-                    input=input_var,
-                    weight=self._weight_params[0] ** 2
-                    + self.var_tform(self._weight_params[1]),
-                    bias=None,
-                )
         else:
             # Compute forward pass with a random sample of parameters.
-            mu = torch.nn.functional.linear(
-                input=input_mu, weight=self.weight, bias=self.bias
-            )
+            mu = torch.nn.functional.linear(input=input_mu, **self.layer_params)
             var = None
 
         return mu, var
@@ -247,21 +232,31 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     # Basic usage example of BayesianLinear.
-    linear = torch.nn.Linear(in_features=3, out_features=1)
-    bayesian_linear = Linear(in_features=3, out_features=1)
-    bl_test = Linear.init_from(layer=linear)
-    batch_size = 1
+    bayesian_linear = Linear(in_features=3, out_features=1, propagate_moments=False)
     n_samples = 10000
+    bayesian_linear_mc = Linear(
+        in_features=3,
+        out_features=1,
+        propagate_moments=True,
+        moment_propagator=MonteCarlo(n_samples=n_samples),
+    )  # computes moments from Monte Carlo without returning actual samples
+    bayesian_linear_mc.load_state_dict(bayesian_linear.state_dict())
+    bayesian_linear_det = Linear(
+        in_features=3,
+        out_features=1,
+        propagate_moments=True,
+        moment_propagator=PropagateLinear(),
+    )  # analytically computes moments
+    bayesian_linear_det.load_state_dict(bayesian_linear.state_dict())
+    batch_size = 1
     input = torch.randn(batch_size, 3)
-    output_samples = torch.stack(
-        [bayesian_linear(input, deterministic=False)[0] for _ in range(n_samples)]
-    )
-    output_mc = (output_samples.mean(dim=0), output_samples.var(dim=0))
-    output_det = bayesian_linear(input, deterministic=True)
+    output_samples = torch.stack([bayesian_linear(input)[0] for _ in range(n_samples)])
+    output_mc = bayesian_linear_mc(input)
+    output_det = bayesian_linear_det(input)
 
     # Overlay deterministic predictions on Monte Carlo samples.
     plt.hist(output_samples.detach().cpu().squeeze(), density=True)
-    x = torch.linspace(-5.0, 5.0, 1000)
+    x = torch.linspace(output_samples.min(), output_samples.max(), 1000)
     plt.plot(
         x,
         (
@@ -271,5 +266,18 @@ if __name__ == "__main__":
         .detach()
         .cpu()
         .squeeze(),
+        label="Analytical",
     )
+    plt.plot(
+        x,
+        (
+            torch.exp(-0.5 * (x - output_mc[0]) ** 2 / output_mc[1])
+            / torch.sqrt(2.0 * np.pi * output_mc[1])
+        )
+        .detach()
+        .cpu()
+        .squeeze(),
+        label="Monte Carlo",
+    )
+    plt.legend()
     plt.show()
