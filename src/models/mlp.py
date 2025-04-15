@@ -17,15 +17,17 @@ class MLP(torch.nn.Module):
         super().__init__()
         modules = [
             torch.nn.Linear(in_features=in_features, out_features=hidden_features),
-            activation(),
         ]
+        if activation is not None:
+            modules.append(activation())
         for _ in range(n_layers - 2):
             modules.append(
                 torch.nn.Linear(
                     in_features=hidden_features, out_features=hidden_features
                 )
             )
-            modules.append(activation())
+            if activation is not None:
+                modules.append(activation())
         modules.append(
             torch.nn.Linear(in_features=hidden_features, out_features=out_features)
         )
