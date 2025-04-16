@@ -11,32 +11,20 @@ def kl_divergence_sampled(
     dist0: dist.Distribution, dist1: dist.Distribution, n_samples: int = 1
 ):
     """KL divergence KL(dist0||dist1) approximated by Monte Carlo sampling."""
-    kl_divergence = torch.tensor(0.0)
+    kl_divergence = []
     for _ in range(n_samples):
         sample = dist0.sample()
-        kl_divergence += dist0.log_prob(sample) - dist1.log_prob(sample)
+        kl_divergence.append(dist0.log_prob(sample) - dist1.log_prob(sample))
 
-    return kl_divergence / n_samples
+    return torch.stack(kl_divergence).mean(dim=0)
 
 
 class KLDivergence(_Loss):
     """KL divergence loss for Bayesian neural networks."""
 
-    def __init__(self):
-        """Initialize KL divergence loss."""
-        super().__init__()
-
-    def forward(
-        self,
-        model: torch.nn.Module,
-        prior: Union[dict, dist.Distribution] = None,
-    ) -> torch.tensor:
-        """Compute KL divergence for Bayesian sub-modules of `model`.
-
+    def __init__(self, prior: Union[dict, dist.Distribution] = None):
+        """Initialize KL divergence loss.
         Args:
-            model: torch.nn.Module that may have some Bayesian layers
-                as sub-modules, for which we'll compute the KL divergence w.r.t
-                their prior.
             prior: Prior distribution over parameters.  This can be a single
                 distribution for all parameters or a dictionary of dictionaries whose
                 primary keys correspond to named modules and whose secondary keys
@@ -45,14 +33,33 @@ class KLDivergence(_Loss):
                 will use priors set within each Bayesian layer on
                 initialization.
         """
+        super().__init__()
+        self.prior = prior
+
+    def forward(
+        self,
+        model: torch.nn.Module,
+    ) -> torch.tensor:
+        """Compute KL divergence for Bayesian sub-modules of `model`.
+
+        Args:
+            model: torch.nn.Module that may have some Bayesian layers
+                as sub-modules, for which we'll compute the KL divergence w.r.t
+                their prior.
+        """
         kl = []
-        for m, module in enumerate(model.named_modules()):
-            if hasattr(module[1], "compute_kl_divergence"):
-                if isinstance(prior, dict):
+        for module in model.named_modules():
+            module_parameters = [p for p in module[1].parameters()]
+            if hasattr(module[1], "compute_kl_divergence") and (
+                len(module_parameters) > 0
+            ):
+                if isinstance(self.prior, dict):
                     # Pass the input prior dictionary for this module.
-                    kl.append(module[1].compute_kl_divergence(prior[module[0]]))
+                    kl.append(
+                        module[1].compute_kl_divergence(priors=self.prior[module[0]])
+                    )
                 else:
-                    kl.append(module[1].compute_kl_divergence(prior))
+                    kl.append(module[1].compute_kl_divergence(priors=self.prior))
 
         return torch.stack(kl).sum()
 

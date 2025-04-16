@@ -1,38 +1,21 @@
 """Definitions of prior distributions over neural network parameters."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 
-import numpy as np
 import torch
 import torch.distributions as dist
 
 
-class Prior(torch.nn.Module):
-    def __init__(self):
-        """Initializer for Prior base class."""
-        super().__init__()
-
-    def log_prob(self, x: torch.tensor) -> torch.tensor:
-        """Compute the log PDF of the prior at points `x`."""
-        pass
-
-    def sample(self, sample_shape: Iterable) -> torch.tensor:
-        """Generate samples from the prior of size `sample_shape`."""
-        pass
-
-
-class SpikeSlab(Prior):
+class SpikeSlab(dist.Distribution):
     """Spike-slab Gaussian Mixture Model prior."""
 
     def __init__(
         self,
-        mu: torch.tensor = torch.tensor([0.0, 0.0]),
-        sigma: torch.tensor = torch.tensor([0.1, 1.0]),
+        loc: torch.tensor = torch.tensor([0.0, 0.0]),
+        scale: torch.tensor = torch.tensor([0.1, 1.0]),
         probs: torch.tensor = torch.tensor([0.5, 0.5]),
     ):
         super().__init__()
-        loc = torch.nn.Parameter(mu, requires_grad=False)
-        scale = torch.nn.Parameter(sigma, requires_grad=False)
         mixture_distribution = dist.Categorical(probs=probs)
         self.distribution = dist.MixtureSameFamily(
             mixture_distribution=mixture_distribution,

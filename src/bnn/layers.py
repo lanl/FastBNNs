@@ -147,12 +147,12 @@ class BayesianLayer(torch.nn.Module):
         }
 
     def compute_kl_divergence(
-        self, prior: Union[dict, dist.Distribution] = None, n_samples: int = 1
+        self, priors: Union[dict, dist.Distribution] = None, n_samples: int = 1
     ) -> torch.tensor:
         """Compute the KL divergence between self.prior and module parameters.
 
         Args:
-            prior: Prior distribution over parameters.  This can be a single
+            priors: Prior distribution over parameters.  This can be a single
                 distribution for all parameters or a dictionary whose keys
                 correspond to named parameters of this layer.  By default, None
                 will use self.priors.  This argument is used to allow external
@@ -161,11 +161,15 @@ class BayesianLayer(torch.nn.Module):
                 divergence for distributions not compatible with
                 torch.nn.distributions.kl_divergence()
         """
+        # Return 0.0 if no learnable parameters are in this layer.
+        if len([p for p in self.parameters()]) == 0:
+            return torch.tensor(0.0)
+
         # Reorganize priors if needed.
-        if prior is None:
+        if priors is None:
             priors = self.priors
-        elif isinstance(prior, dist.Distribution):
-            priors = {key: prior for key in self.samplers.keys()}
+        elif not isinstance(priors, dict):
+            priors = {key: priors for key in self.samplers.keys()}
 
         # Loop over parameters and compute KL contribution.
         device = next(self._module_params.values()).device
