@@ -129,8 +129,12 @@ class Linear(MomentPropagator):
         )
         var = torch.nn.functional.linear(
             input=input_mu**2,
-            weight=module.var_tform(module._module_params["weight"][1]),
-            bias=None if bias_params[1] is None else module.var_tform(bias_params[1]),
+            weight=module.scale_tform(module._module_params["weight"][1]) ** 2,
+            bias=(
+                None
+                if bias_params[1] is None
+                else module.scale_tform(bias_params[1]) ** 2
+            ),
         )
 
         # Add input variance contribution.
@@ -138,7 +142,7 @@ class Linear(MomentPropagator):
             var += torch.nn.functional.linear(
                 input=input_var,
                 weight=module._module_params["weight"][0] ** 2
-                + module.var_tform(module._module_params["weight"][1]),
+                + module.scale_tform(module._module_params["weight"][1]) ** 2,
                 bias=None,
             )
 

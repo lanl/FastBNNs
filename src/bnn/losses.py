@@ -1,10 +1,10 @@
 """Losses and helpers useful for Bayesian neural network training/evaluation."""
 
+from typing import Union
+
 import torch
 import torch.distributions as dist
 from torch.nn.modules.loss import _Loss
-
-from bnn import layers
 
 
 def kl_divergence_sampled(
@@ -26,14 +26,35 @@ class KLDivergence(_Loss):
         """Initialize KL divergence loss."""
         super().__init__()
 
-    def forward(self, model: torch.nn.Module) -> torch.tensor:
-        """Compute KL divergence for Bayesian sub-modules of `model`."""
-        kl = torch.tensor(0.0)
-        for module in model.named_modules():
-            if isinstance(module, layers.BayesianLayer):
-                kl += module.compute_kl_divergence()
+    def forward(
+        self,
+        model: torch.nn.Module,
+        prior: Union[dict, dist.Distribution] = None,
+    ) -> torch.tensor:
+        """Compute KL divergence for Bayesian sub-modules of `model`.
 
-        return kl
+        Args:
+            model: torch.nn.Module that may have some Bayesian layers
+                as sub-modules, for which we'll compute the KL divergence w.r.t
+                their prior.
+            prior: Prior distribution over parameters.  This can be a single
+                distribution for all parameters or a dictionary of dictionaries whose
+                primary keys correspond to named modules and whose secondary keys
+                correspond to parameters of that module.  The list indices
+                correspond to model.named_modules(). By default, None
+                will use priors set within each Bayesian layer on
+                initialization.
+        """
+        kl = []
+        for m, module in enumerate(model.named_modules()):
+            if hasattr(module[1], "compute_kl_divergence"):
+                if isinstance(prior, dict):
+                    # Pass the input prior dictionary for this module.
+                    kl.append(module[1].compute_kl_divergence(prior[module[0]]))
+                else:
+                    kl.append(module[1].compute_kl_divergence(prior))
+
+        return torch.stack(kl).sum()
 
 
 class ELBO(_Loss):

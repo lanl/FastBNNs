@@ -42,7 +42,7 @@ class BayesianLayer(torch.nn.Module):
                 module = torch.nn.Linear(in_features, out_features)
             samplers_init: Dictionary of samplers that can be sampled to reset
                 parameters of this layer.  Each value is a tuple corresponding
-                to the mean and (unscaled, see `var_tform` usage) variance
+                to the mean and (unscaled, see `scale_tform` usage) standard deviation
                 parameters (e.g., samplers_init["weight"][0].sample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
@@ -82,7 +82,7 @@ class BayesianLayer(torch.nn.Module):
                     (2, *param[1].shape),
                     device=param[1].device,
                     dtype=param[1].dtype,
-                )  # (mean, unscaled variance)
+                )  # (mean, unscaled standard deviation)
             )
         self._module_params = _module_params
 
@@ -94,10 +94,10 @@ class BayesianLayer(torch.nn.Module):
                 samplers_init[key] = (
                     dist.Normal(
                         loc=0.0,
-                        scale=1.0 / _module_params[key][0].numel(),
+                        scale=1.0 / val[0].numel(),
                     ),
                     dist.Normal(
-                        loc=-6.0,
+                        loc=-5.0,
                         scale=1.0 / val[0].numel(),
                     ),
                 )
@@ -105,15 +105,10 @@ class BayesianLayer(torch.nn.Module):
         self.reset_parameters()
 
         # Initialize variational distribution samplers.
-        var_tform = torch.nn.functional.softplus
-        self.var_tform = var_tform
+        scale_tform = torch.nn.functional.softplus
+        self.scale_tform = scale_tform
         if samplers is None:
             samplers = {key: dist.Normal for key in _module_params.keys()}
-        for key, value in samplers.items():
-            samplers[key] = value(
-                loc=_module_params[key][0],
-                scale=torch.sqrt(var_tform(_module_params[key][1])),
-            )
         self.samplers = samplers
 
         # Set priors.
@@ -136,27 +131,65 @@ class BayesianLayer(torch.nn.Module):
     @property
     def module_params(self):
         """Return a sample of this module's parameters."""
-        return {
-            key: None if self._module_params[key] is None else value.sample()
-            for key, value in self.samplers.items()
+        # Initialize the samplers on the fly to ensure we're on the same device
+        # as self._module_params.
+        samplers = {
+            key: val(
+                loc=self._module_params[key][0],
+                scale=self.scale_tform(self._module_params[key][1]),
+            )
+            for key, val in self.samplers.items()
         }
 
-    def compute_kl_divergence(self, n_samples: int = 1) -> torch.tensor:
-        """Compute the KL divergence between self.prior and module parameters."""
-        kl_divergence = torch.tensor(0.0)
-        for param_name, param_prior in self.priors.items():
+        return {
+            key: (None if self._module_params[key] is None else val.sample())
+            for key, val in samplers.items()
+        }
+
+    def compute_kl_divergence(
+        self, prior: Union[dict, dist.Distribution] = None, n_samples: int = 1
+    ) -> torch.tensor:
+        """Compute the KL divergence between self.prior and module parameters.
+
+        Args:
+            prior: Prior distribution over parameters.  This can be a single
+                distribution for all parameters or a dictionary whose keys
+                correspond to named parameters of this layer.  By default, None
+                will use self.priors.  This argument is used to allow external
+                passing of priors not defined at initialization of this layer.
+            n_samples: Number of Monte Carlo samples used to estimate KL
+                divergence for distributions not compatible with
+                torch.nn.distributions.kl_divergence()
+        """
+        # Reorganize priors if needed.
+        if prior is None:
+            priors = self.priors
+        elif isinstance(prior, dist.Distribution):
+            priors = {key: prior for key in self.samplers.keys()}
+
+        # Loop over parameters and compute KL contribution.
+        device = next(self._module_params.values()).device
+        kl_divergence = torch.tensor(0.0, device=device)
+        for param_name, param_prior in priors.items():
             # Compute KL divergence for this parameter.
             try:
                 # Attempt to use PyTorch kl_divergence.  If our distributions
                 # aren't compatible, dist.kl_divergence kicks us to the except
                 # clause below.
                 kl_divergence += dist.kl_divergence(
-                    self.samplers[param_name], param_prior
+                    self.samplers[param_name](
+                        loc=self._module_params[param_name][0],
+                        scale=self.scale_tform(self._module_params[param_name][1]),
+                    ),
+                    param_prior,
                 ).sum()
             except NotImplementedError:
-                # Compute Monte Carlo KL loss.
+                # Compute Monte Carlo KL divergence.
                 kl_divergence += kl_divergence_sampled(
-                    dist0=self.samplers[param_name],
+                    dist0=self.samplers[param_name](
+                        loc=self._module_params[param_name][0],
+                        scale=self.scale_tform(self._module_params[param_name][1]),
+                    ),
                     dist1=param_prior,
                     n_samples=n_samples,
                 ).sum()

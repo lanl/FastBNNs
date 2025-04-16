@@ -4,52 +4,59 @@ from collections.abc import Callable, Iterable
 
 import numpy as np
 import torch
+import torch.distributions as dist
 
 
 class Prior(torch.nn.Module):
-    def __init__(self, generator: Callable, generator_kwargs: dict = {}):
-        """Initializer for Prior base class
-
-        Args:
-            generator: Random number generator that samples from the desired prior.
-            generator_kwargs: Keyword arguments passed to the generators call.
-        """
+    def __init__(self):
+        """Initializer for Prior base class."""
         super().__init__()
 
-        self.generator = generator
-        self.generator_kwargs = generator_kwargs
-
-    def forward(self, x: torch.tensor):
-        """Compute the PDF of the prior at points `x`."""
+    def log_prob(self, x: torch.tensor) -> torch.tensor:
+        """Compute the log PDF of the prior at points `x`."""
         pass
 
-    def sample(self, size: Iterable):
-        """Generate samples from the prior of size `size`."""
+    def sample(self, sample_shape: Iterable) -> torch.tensor:
+        """Generate samples from the prior of size `sample_shape`."""
         pass
 
 
-class IsotropicNormal(Prior):
+class SpikeSlab(Prior):
+    """Spike-slab Gaussian Mixture Model prior."""
+
     def __init__(
         self,
-        mu: torch.tensor = torch.tensor(0.0),
-        sigma: torch.tensor = torch.tensor(1.0),
+        mu: torch.tensor = torch.tensor([0.0, 0.0]),
+        sigma: torch.tensor = torch.tensor([0.1, 1.0]),
+        probs: torch.tensor = torch.tensor([0.5, 0.5]),
     ):
-        super().__init__(generator=lambda size: mu + sigma * torch.randn(size=size))
-        self.mu = torch.nn.Parameter(mu, requires_grad=False)
-        self.sigma = torch.nn.Parameter(sigma, requires_grad=False)
-
-    def forward(self, x: torch.tensor):
-        """Compute the Normal PDF at points `x`."""
-        return torch.exp(-0.5 * ((x - self.mu) / self.sigma) ** 2) / (
-            np.sqrt(2.0 * torch.pi) * self.sigma
+        super().__init__()
+        loc = torch.nn.Parameter(mu, requires_grad=False)
+        scale = torch.nn.Parameter(sigma, requires_grad=False)
+        mixture_distribution = dist.Categorical(probs=probs)
+        self.distribution = dist.MixtureSameFamily(
+            mixture_distribution=mixture_distribution,
+            component_distribution=dist.Normal(loc=loc, scale=scale),
         )
 
-    def sample(self, size: Iterable = [1]):
-        """Sample from the Normal prior."""
-        return self.generator(size)
+    def log_prob(self, x: torch.tensor) -> torch.tensor:
+        """Compute the log PDF of the prior at points `x`."""
+        return self.distribution.log_prob(x)
+
+    def sample(self, sample_shape: Iterable = (1,)) -> torch.tensor:
+        """Generate samples from the prior of size `sample_shape`."""
+        return self.distribution.sample(sample_shape=sample_shape)
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
     # Example using an IsotropicNormal prior.
-    prior = IsotropicNormal()
-    sample = prior.sample(size=(100, 10))
+    prior = SpikeSlab()
+    sample = prior.sample(sample_shape=(100, 1))
+    x = torch.linspace(-5.0, 5.0, 1000)
+    pdf = torch.exp(prior.log_prob(x))
+    fig, ax = plt.subplots()
+    ax.hist(sample, density=True)
+    ax.plot(x, pdf)
+    plt.show()
