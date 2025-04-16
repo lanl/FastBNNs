@@ -118,23 +118,19 @@ class Linear(MomentPropagator):
 
         # Compute analytical result under mean-field approximation following
         # https://doi.org/10.48550/arXiv.2402.14532
+        if "bias" in module._module_params.keys():
+            bias_params = module._module_params["bias"]
+        else:
+            bias_params = (None, None)
         mu = torch.nn.functional.linear(
             input=input_mu,
             weight=module._module_params["weight"][0],
-            bias=(
-                None
-                if module._module_params["bias"] is None
-                else module._module_params["bias"][0]
-            ),
+            bias=bias_params[0],
         )
         var = torch.nn.functional.linear(
             input=input_mu**2,
             weight=module.var_tform(module._module_params["weight"][1]),
-            bias=(
-                None
-                if module._module_params["bias"] is None
-                else module.var_tform(module._module_params["bias"][1])
-            ),
+            bias=bias_params[1],
         )
 
         # Add input variance contribution.
