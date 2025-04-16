@@ -8,6 +8,7 @@ import torch
 import torch.distributions as dist
 
 from bnn.inference import MomentPropagator, MonteCarlo, Linear
+from bnn.losses import kl_divergence_sampled
 from utils.misc import get_torch_functional
 
 
@@ -96,7 +97,7 @@ class BayesianLayer(torch.nn.Module):
                         scale=1.0 / _module_params[key][0].numel(),
                     ),
                     dist.Normal(
-                        loc=-5.0,
+                        loc=-6.0,
                         scale=1.0 / val[0].numel(),
                     ),
                 )
@@ -145,29 +146,20 @@ class BayesianLayer(torch.nn.Module):
         kl_divergence = torch.tensor(0.0)
         for param_name, param_prior in self.priors.items():
             # Compute KL divergence for this parameter.
-            prior_dist_name = param_prior.__class__.__name__
-            param_dist_name = self.samplers[param_name].__class__.__name__
-            if (prior_dist_name == param_dist_name) and (prior_dist_name == "Normal"):
-                # If both distributions are Normal, we can compute KL in closed form.
-                mu_p = param_prior.loc
-                mu_q = self.samplers[param_name].loc
-                sigma_p = param_prior.scale
-                sigma_q = self.samplers[param_name].scale
-                kl_divergence += (
-                    torch.log(sigma_p / sigma_q)
-                    + ((sigma_q**2 + (mu_q - mu_p) ** 2) / (2.0 * sigma_p**2))
-                    - 0.5
+            try:
+                # Attempt to use PyTorch kl_divergence.  If our distributions
+                # aren't compatible, dist.kl_divergence kicks us to the except
+                # clause below.
+                kl_divergence += dist.kl_divergence(
+                    self.samplers[param_name], param_prior
                 ).sum()
-            else:
+            except NotImplementedError:
                 # Compute Monte Carlo KL loss.
-                kl_current = torch.tensor(0.0)
-                for _ in range(n_samples):
-                    sample = self.samplers[param_name].sample()
-                    kl_current += (
-                        self.samplers[param_name].log_prob(sample)
-                        - param_prior.log_prob(sample)
-                    ).sum()
-                kl_divergence += kl_current / n_samples
+                kl_divergence += kl_divergence_sampled(
+                    dist0=self.samplers[param_name],
+                    dist1=param_prior,
+                    n_samples=n_samples,
+                ).sum()
 
         return kl_divergence
 
