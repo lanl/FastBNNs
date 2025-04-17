@@ -69,7 +69,7 @@ class ELBO(_Loss):
 
     def __init__(
         self,
-        log_likelihood: _Loss = None,
+        neg_log_likelihood: _Loss = None,
         kl_divergence: _Loss = KLDivergence(),
         beta: float = 1.0,
         reduction: str = "sum",
@@ -77,11 +77,11 @@ class ELBO(_Loss):
         """Initialize ELBO loss.
 
         Args:
-            log_likelihood: Initialized log_likelihood loss (e.g.,
+            neg_log_likelihood: Initialized neg_log_likelihood loss (e.g.,
                 torch.nn.GaussianNLLLoss()).  This will be called in the forward
-                pass of this loss as log_likelihood(**kwargs) where **kwargs are
+                pass of this loss as neg_log_likelihood(**kwargs) where **kwargs are
                 the keyword arguments passed as ELBO()(**kwargs).
-                NOTE: It's best to use reduction="sum" for the log_likelihood
+                NOTE: It's best to use reduction="sum" for the neg_log_likelihood
                 so that we don't have to rescale the KL term by the batch size
                 (see Graves 2011 NeurIPS paper discussion around eqn. 18)
             kl_divergence: Initialized kl_divergence loss whose forward pass
@@ -93,9 +93,11 @@ class ELBO(_Loss):
         super().__init__(reduction=reduction)
 
         # Set default log likelihood calculator.
-        if log_likelihood is None:
-            log_likelihood = torch.nn.GaussianNLLLoss(full=True, reduction=reduction)
-        self.log_likelihood = log_likelihood
+        if neg_log_likelihood is None:
+            neg_log_likelihood = torch.nn.GaussianNLLLoss(
+                full=True, reduction=reduction
+            )
+        self.neg_log_likelihood = neg_log_likelihood
 
         self.kl_divergence = kl_divergence
         self.beta = beta
@@ -110,6 +112,8 @@ class ELBO(_Loss):
             kwargs: Keyword arguments to pass to self.log_likelihood(**kwargs)
         """
         if model is None:
-            return self.log_likelihood(**kwargs)
+            return self.neg_log_likelihood(**kwargs)
         else:
-            return self.log_likelihood(**kwargs) + self.beta * self.kl_divergence(model)
+            return self.neg_log_likelihood(**kwargs) + self.beta * self.kl_divergence(
+                model
+            )
