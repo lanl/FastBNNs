@@ -4,10 +4,17 @@ from collections.abc import Iterable
 
 import torch
 import torch.distributions as dist
+import torch.distributions.constraints as constraints
 
 
 class SpikeSlab(dist.Distribution):
     """Spike-slab Gaussian Mixture Model prior."""
+
+    arg_constraints = {
+        "loc": constraints.real,
+        "scale": constraints.positive,
+        "probs": constraints.real,
+    }
 
     def __init__(
         self,
@@ -15,7 +22,9 @@ class SpikeSlab(dist.Distribution):
         scale: torch.tensor = torch.tensor([0.1, 1.0]),
         probs: torch.tensor = torch.tensor([0.5, 0.5]),
     ):
-        super().__init__()
+        self.loc = loc
+        self.scale = scale
+        self.probs = probs
         mixture_distribution = dist.Categorical(probs=probs)
         self.distribution = dist.MixtureSameFamily(
             mixture_distribution=mixture_distribution,
