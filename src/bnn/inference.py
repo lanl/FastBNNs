@@ -208,10 +208,10 @@ class MonteCarlo(MomentPropagator):
 
 
 class Linear(MomentPropagator):
-    """Deterministic moment propagation of mean, variance through a Linear layer."""
+    """Deterministic moment propagation of mean and variance through a Linear layer."""
 
     def __init__(self):
-        """Initializer for PropagateLinear inference module"""
+        """Initializer for Linear inference module"""
         super().__init__()
 
     def forward(
@@ -232,12 +232,12 @@ class Linear(MomentPropagator):
             bias_params = module._module_params["bias"]
         else:
             bias_params = (None, None)
-        mu = torch.nn.functional.linear(
+        mu = module.functional(
             input=input_mu,
             weight=module._module_params["weight"][0],
             bias=bias_params[0],
         )
-        var = torch.nn.functional.linear(
+        var = module.functional(
             input=input_mu**2,
             weight=module.scale_tform(module._module_params["weight"][1]) ** 2,
             bias=(
@@ -249,7 +249,7 @@ class Linear(MomentPropagator):
 
         # Add input variance contribution.
         if input_var is not None:
-            var += torch.nn.functional.linear(
+            var += module.functional(
                 input=input_var,
                 weight=module._module_params["weight"][0] ** 2
                 + module.scale_tform(module._module_params["weight"][1]) ** 2,
@@ -257,6 +257,42 @@ class Linear(MomentPropagator):
             )
 
         return mu, var
+
+
+class Conv1d(Linear):
+    """Deterministic moment propagation of mean and variance through a Conv1d layer.
+
+    Conv2d acts the same as Linear w.r.t. inputs.  We create this named class so
+    that external workflows can search for and use a "Conv1d" class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """Initializer for Conv1d inference module."""
+        super().__init__(*args, **kwargs)
+
+
+class Conv2d(Linear):
+    """Deterministic moment propagation of mean and variance through a Conv2d layer.
+
+    Conv2d acts the same as Linear w.r.t. inputs.  We create this named class so
+    that external workflows can search for and use a "Conv2d" class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """Initializer for Conv2d inference module."""
+        super().__init__(*args, **kwargs)
+
+
+class Conv3d(Linear):
+    """Deterministic moment propagation of mean and variance through a Conv3d layer.
+
+    Conv3d acts the same as Linear w.r.t. inputs.  We create this named class so
+    that external workflows can search for and use a "Conv3d" class.
+    """
+
+    def __init__(self, *args, **kwargs):
+        """Initializer for Conv3d inference module."""
+        super().__init__(*args, **kwargs)
 
 
 if __name__ == "__main__":
