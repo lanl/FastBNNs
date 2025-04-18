@@ -1,8 +1,6 @@
-"""Functionality for converting neural networks to Bayesian neural networks."""
+"""Bayesian neural networks utilities (e.g., NN to BNN converters)."""
 
-import functools
 import re
-from typing import Any
 
 import torch
 
@@ -12,10 +10,54 @@ import bnn.inference
 from utils.misc import get_torch_functional
 
 
+def set_requires_grad_loc_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
+    """Change requires_grad of loc parameters of Bayesian layers in `model`.
+
+    Args:
+        model: Model for which we'll call .set_requires_grad_loc() on all
+            BayesianLayer modules.
+        requires_grad: Value we wish to set for requires_grad property of
+            Bayesian layer loc parameters.
+
+    Return:
+        set: Lists of strings containing module names that
+            had .set_requires_grad_loc() called.
+    """
+    set = []
+    for module in model.named_modules():
+        if hasattr(module[1], "set_requires_grad_loc"):
+            module[1].set_requires_grad_loc(requires_grad=requires_grad)
+            set.append(module[0])
+
+    return set
+
+
+def set_requires_grad_scale_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
+    """Change requires_grad of scale parameters of Bayesian layers in `model`.
+
+    Args:
+        model: Model for which we'll call .set_requires_grad_scale() on all
+            BayesianLayer modules.
+        requires_grad: Value we wish to set for requires_grad property of
+            Bayesian layer scale parameters.
+
+    Return:
+        set: Lists of strings containing module names that
+            had .set_requires_grad_scale() called.
+    """
+    set = []
+    for module in model.named_modules():
+        if hasattr(module[1], "set_requires_grad_scale"):
+            module[1].set_requires_grad_scale(requires_grad=requires_grad)
+            set.append(module[0])
+
+    return set
+
+
 def convert_to_bnn_(
     model: torch.nn.Module,
     bayesian_layer_kwargs: dict = {},
-):
+) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
     Args:
@@ -81,7 +123,7 @@ if __name__ == "__main__":
     model = mlp.MLP(
         in_features=in_features,
         out_features=out_features,
-        n_layers=3,
+        n_hidden_layers=3,
         activation=torch.nn.LeakyReLU,
     )
     convert_to_bnn_(model=model)

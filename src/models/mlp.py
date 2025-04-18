@@ -11,7 +11,7 @@ class MLP(torch.nn.Module):
         in_features: int,
         out_features: int,
         hidden_features: int = 128,
-        n_layers: int = 3,
+        n_hidden_layers: int = 3,
         activation: type = torch.nn.LeakyReLU,
     ):
         super().__init__()
@@ -20,7 +20,7 @@ class MLP(torch.nn.Module):
         ]
         if activation is not None:
             modules.append(activation())
-        for _ in range(n_layers - 2):
+        for _ in range(n_hidden_layers - 2):
             modules.append(
                 torch.nn.Linear(
                     in_features=hidden_features, out_features=hidden_features
