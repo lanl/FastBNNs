@@ -89,7 +89,13 @@ def convert_to_bnn_(
         # functionals in torch.nn.functional), otherwise fallback to a mean
         # passthrough layer.
         functional = get_torch_functional(module.__class__)
-        if functional is not None:
+        if hasattr(bnn.layers, module_name):
+            # If a custom layer exists for this named layer, we'll use that by default.
+            custom_layer = getattr(bnn.layers, module_name)(
+                module=module, **bayesian_layer_kwargs
+            )
+            model.set_submodule(leaf, custom_layer)
+        elif functional is not None:
             # Search for a good default moment propagator.
             kwarg_overrides = {}
             if "moment_propagator" not in bayesian_layer_kwargs.keys():
@@ -102,12 +108,6 @@ def convert_to_bnn_(
                 module=module, **(bayesian_layer_kwargs | kwarg_overrides)
             )
             model.set_submodule(leaf, bayesian_layer)
-        elif hasattr(bnn.layers, module_name):
-            # If a custom layer exists for this named layer, we'll use that by default.
-            custom_layer = getattr(bnn.layers, module_name)(
-                module=module, **bayesian_layer_kwargs
-            )
-            model.set_submodule(leaf, custom_layer)
         else:
             # Use generic mean passthrough layer for compatibility with Bayesian layers.
             passthrough_layer = ForwardPassMean(module=module)
