@@ -6,10 +6,50 @@ getattr(inference, layer.__class__.__name__) will return the custom propagator
 for that layer if available.
 """
 
+from collections.abc import Callable
+import functools
 from typing import Union
 
 import torch
 import torch.distributions as dist
+
+
+def select_default_sigmas(
+    mu: torch.tensor, var: torch.tensor, n_sigma_points: int = 3, kappa: int = 2
+) -> tuple[torch.tensor, torch.tensor]:
+    """Select sigma points for use in the unscented transform as in [1].
+
+    [1] https://doi.org/10.1117/12.280797
+
+    Args:
+        mu: Mean values that will be propagated through the function of interest.
+        var: Variances that will be propagated through the function of interest.
+        n_sigma_points: Number of sigma points to return.  This must be an odd number.
+        kappa: Spread parameter for sigma point selection.
+    """
+
+    # Compute sigma points.
+    assert (n_sigma_points // 2) != 0, "Input `n_sigma_points` must be an odd number."
+    sigma_points = torch.empty(
+        (n_sigma_points, *mu.shape), device=mu.device, dtype=mu.dtype
+    )
+    sigma_points[0] = mu.detach()
+    n = (n_sigma_points - 1) // 2
+    n_vec = torch.arange(1, 1 + n, device=mu.device)
+    sigma_points[1 : 1 + n] = mu + torch.sqrt(
+        torch.einsum("ij,jkl->ikl", n_vec[:, None] + kappa, var[None, ...])
+    )
+    sigma_points[1 + n :] = mu - torch.sqrt(
+        torch.einsum("ij,jkl->ikl", n_vec[:, None] + kappa, var[None, ...])
+    )
+
+    # Compute corresponding weights.
+    weights = torch.empty(n_sigma_points, device=mu.device, dtype=mu.dtype)
+    weights[0] = kappa / (n + kappa)
+    weights[1 : 1 + n] = 0.5 / (n_vec + kappa)
+    weights[1 + n :] = 0.5 / (n_vec + kappa)
+
+    return sigma_points, weights
 
 
 class MomentPropagator(torch.nn.Module):
@@ -33,7 +73,73 @@ class MomentPropagator(torch.nn.Module):
                 of the input (in which case `input_var` is ignored).
             input_var: Variance of input (ignored if `input_mu` is a tuple).
         """
-        pass
+        raise NotImplementedError
+
+
+class UnscentedTransform(MomentPropagator):
+    """Unscented transform propagation of mean and variance through `module`.
+
+    This propagator uses the unscented transform to propagate mean and variance
+    through a deterministic layer.
+    """
+
+    def __init__(self, sigma_selector: Callable = None):
+        """Initializer for UnscentedTransform inference module.
+
+        Args:
+            sigma_selector: Callable that accepts input mean and variance and
+                returns the corresponding sigma points and weights used in the
+                unscented transform.
+        """
+        super().__init__()
+
+        if sigma_selector is None:
+            sigma_selector = functools.partial(
+                select_default_sigmas, n_sigma_points=3, kappa=2
+            )
+        self.sigma_selector = sigma_selector
+
+    def forward(
+        self,
+        module: torch.nn.Module,
+        input_mu: Union[tuple, torch.tensor],
+        input_var: torch.tensor = None,
+        return_samples: bool = False,
+    ) -> tuple[torch.tensor, torch.tensor]:
+        """Propagate moments using the unscented transform."""
+        # Repackage `input_mu` if passed as a tuple (this allows the input mean
+        # and variance to be passed as forward(x) where x = (mu, var)).
+        if isinstance(input_mu, tuple):
+            input_mu, input_var = input_mu
+
+        # Temporarily turn off moment propagation in module to avoid recursion.
+        if hasattr(module, "propagate_moments"):
+            propagate_moments_init = module.propagate_moments
+            module.propagate_moments = False
+
+        # Propagate through module.
+        if input_var is None:
+            mu = module(input_mu)[0]
+            var = None
+            samples = None
+        else:
+            # Select sigma points.
+            sigma_points, weights = self.sigma_selector(mu=input_mu, var=input_var)
+
+            # Propagate mean and variance.
+            samples = torch.stack([module(s)[0] for s in sigma_points])
+            mu = torch.einsum("i,i...->...", weights, samples)
+            var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
+
+        # Restore initial setting of `propagate_moments` (this may always be
+        # be True but using initial state to account for custom use cases).
+        if hasattr(module, "propagate_moments"):
+            module.propagate_moments = propagate_moments_init
+
+        if return_samples:
+            return mu, var, samples
+        else:
+            return mu, var
 
 
 class MonteCarlo(MomentPropagator):
@@ -67,6 +173,7 @@ class MonteCarlo(MomentPropagator):
         module: torch.nn.Module,
         input_mu: Union[tuple, torch.tensor],
         input_var: torch.tensor = None,
+        return_samples: bool = False,
     ) -> tuple[torch.tensor, torch.tensor]:
         """Propagate moments by averaging over n_samples forward passes of module."""
         # Repackage `input_mu` if passed as a tuple (this allows the input mean
@@ -94,7 +201,10 @@ class MonteCarlo(MomentPropagator):
         if hasattr(module, "propagate_moments"):
             module.propagate_moments = propagate_moments_init
 
-        return samples.mean(dim=0), samples.var(dim=0)
+        if return_samples:
+            return samples.mean(dim=0), samples.var(dim=0), samples
+        else:
+            return samples.mean(dim=0), samples.var(dim=0)
 
 
 class Linear(MomentPropagator):
@@ -147,3 +257,49 @@ class Linear(MomentPropagator):
             )
 
         return mu, var
+
+
+if __name__ == "__main__":
+    """Example usages of inference modules."""
+    import matplotlib.pyplot as plt
+
+    # Define a nonlinearity to propagate through.
+    layer = torch.nn.LeakyReLU()
+
+    # Define some propagators.
+    mc = MonteCarlo(n_samples=100)
+    ut = UnscentedTransform()
+
+    # Propagate example data through layer.
+    input_mu = torch.tensor([1.23])[None, :]
+    input_var = torch.tensor([3.21])[None, :]
+    out_mc = mc(
+        module=layer, input_mu=input_mu, input_var=input_var, return_samples=True
+    )
+    out_ut = ut(
+        module=layer, input_mu=input_mu, input_var=input_var, return_samples=True
+    )
+
+    # Plot results.
+    x = torch.linspace(
+        (input_mu - 3.0 * torch.sqrt(input_var)).squeeze(),
+        (input_mu + 3.0 * torch.sqrt(input_var)).squeeze(),
+        1000,
+    )
+    fig, ax = plt.subplots()
+    ax.hist(out_mc[2], density=True, label="Monte Carlo samples")
+    ax.plot(
+        x,
+        torch.distributions.Normal(loc=out_mc[0], scale=out_mc[1].sqrt())
+        .log_prob(x)
+        .exp(),
+        label="Monte Carlo estimated PDF",
+    )
+    ax.plot(
+        x,
+        torch.distributions.Normal(loc=out_ut[0], scale=out_ut[1].sqrt())
+        .log_prob(x)
+        .exp(),
+        label="Unscented transform estimated PDF",
+    )
+    plt.show()
