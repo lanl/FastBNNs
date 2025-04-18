@@ -81,9 +81,6 @@ class ELBO(_Loss):
                 torch.nn.GaussianNLLLoss()).  This will be called in the forward
                 pass of this loss as neg_log_likelihood(**kwargs) where **kwargs are
                 the keyword arguments passed as ELBO()(**kwargs).
-                NOTE: It's best to use reduction="sum" for the neg_log_likelihood
-                so that we don't have to rescale the KL term by the batch size
-                (see Graves 2011 NeurIPS paper discussion around eqn. 18)
             kl_divergence: Initialized kl_divergence loss whose forward pass
                 takes a torch.nn.Module `model` as input and returns a tensor
                 corresponding to the KL divergence between parameters of `model`
@@ -111,7 +108,7 @@ class ELBO(_Loss):
                 their prior.  Passing None is treated as no model, i.e., KL = 0.0
             kwargs: Keyword arguments to pass to self.log_likelihood(**kwargs)
         """
-        if model is None:
+        if (model is None) or (self.beta == 0.0):
             return self.neg_log_likelihood(**kwargs)
         else:
             return self.neg_log_likelihood(**kwargs) + self.beta * self.kl_divergence(
