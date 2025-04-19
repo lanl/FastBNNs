@@ -15,143 +15,9 @@ from utils.misc import get_torch_functional
 class Converter(torch.nn.Module):
     """Base class for Converter modules to make PyTorch modules BNN compatible."""
 
-    def __init__(module: torch.nn.Module, *args, **kwargs):
+    def __init__(self, module: torch.nn.Module, *args, **kwargs):
         super().__init__()
-
-    def forward(
-        self,
-        input_mu: Union[tuple, torch.tensor],
-        input_var: torch.tensor = None,
-    ) -> tuple[torch.tensor, torch.tensor]:
-        """Forward pass through module."""
-        raise NotImplementedError
-
-
-class BayesianLayer(Converter):
-    """Bayesian implementation of a generic PyTorch module."""
-
-    def __init__(
-        self,
-        module: torch.nn.Module,
-        samplers: dict = None,
-        samplers_init: dict = None,
-        priors: dict = None,
-        moment_propagator: MomentPropagator = None,
-        propagate_moments: bool = True,
-        *args,
-        **kwargs,
-    ):
-        """BayesianLayer initializer.
-
-        Args:
-            module: Module with a functional version present in torch.nn.functional.
-                For such modules, we'll search for learnable parameters, create
-                their Bayesian counterparts under the mean-field approximation for
-                two parameter distributions (i.e., param -> (param_mean, param_var))
-            samplers: Dictionary of distributions that are sampled to return
-                parameters of this layer (i.e., the variational distributions).
-                These should be uninitialized or partially initialized
-                distributions that accept inputs `loc` and `scale` and return
-                an object with a .sample() method which returns tensors
-                corresponding to sampled parameters.  For example,
-                samplers["weight"](loc=0.0, scale=1.0).sample()
-                must return a tensor of size (out_features, in_features) if
-                module = torch.nn.Linear(in_features, out_features)
-            samplers_init: Dictionary of samplers that can be sampled to reset
-                parameters of this layer.  Each value is a tuple corresponding
-                to the mean and (unscaled, see `scale_tform` usage) standard deviation
-                parameters (e.g., samplers_init["weight"][0].sample() should
-                return a shape (out_features, in_features) tensor defining
-                initial weight parameters).  Keys should match those in `samplers`.
-            priors: Dictionary of prior distributions over layer parameters.
-                These distributions should be initialized (like `samplers_init`)
-                and have a .sample() method returning a tensor of the same
-                size as the corresponding layer parameter and a .log_prob(x) method
-                returning the log of the PDF at input x in the distributions domain.
-                These distributions are used in self.compute_kl_divergence().
-                Keys should match those in `samplers`.
-            moment_propagator: Propagation module to propagate mean and variance
-                through this layer.
-            propagate_moments: Flag indicating forward pass should use
-                `moment_propagator` to compute the output mean and variance from
-                this layer.
-        """
-        super().__init__()
-
-        # Validate `module` compatability with this class and find associated
-        # functional from torch.nn.functional.
-        functional = get_torch_functional(module.__class__)
-        assert (
-            functional is not None
-        ), "`module` must have a functional version in torch.nn.functional to use this class!"
-        self.functional = functional
-
-        # Parametrize the distributions of the Bayesian counterparts of each
-        # named parameter.  Each distribution will be parametrized by a
-        # mean and unscaled st. dev. parameter.  These are stored as
-        # a ParameterList to simplify advanced training strategies (e.g.,
-        # freezing mean parameters and only training st. dev. parameters).
-        _module_params = torch.nn.ParameterDict()
-        for param in module.named_parameters():
-            _module_params[param[0]] = torch.nn.ParameterList(
-                [
-                    torch.empty(
-                        param[1].shape,
-                        device=param[1].device,
-                        dtype=param[1].dtype,
-                    ),
-                    torch.empty(
-                        param[1].shape,
-                        device=param[1].device,
-                        dtype=param[1].dtype,
-                    ),
-                ]
-            )  # (mean, unscaled standard deviation)
-        self._module_params = _module_params
-
-        # Set moment propagator.
-        self.propagate_moments = propagate_moments
-        if moment_propagator is None:
-            if len(_module_params) == 0:
-                # If this module doesn't have learnable parameters we'll
-                # default use the unscented transform.
-                moment_propagator = UnscentedTransform()
-            else:
-                # With learnable Bayesian parameters, we'll default to
-                # Monte Carlo sampling.
-                moment_propagator = MonteCarlo()
-        self.moment_propagator = moment_propagator
-
-        # Create samplers for each named parameter.
-        if samplers_init is None:
-            # Prepare (relatively arbitrary) default samplers.
-            samplers_init = {}
-            for key, val in _module_params.items():
-                samplers_init[key] = (
-                    dist.Uniform(
-                        low=-np.sqrt(val[0].shape[-1]),
-                        high=np.sqrt(val[0].shape[-1]),
-                    ),
-                    dist.Uniform(
-                        low=-8.0,
-                        high=-2.0,
-                    ),
-                )
-        self.samplers_init = samplers_init
-        self.reset_parameters()
-
-        # Initialize variational distribution samplers.
-        scale_tform = torch.nn.functional.softplus
-        self.scale_tform = scale_tform
-        if samplers is None:
-            samplers = {key: dist.Normal for key in _module_params.keys()}
-        self.samplers = samplers
-
-        # Set priors.
-        if priors is None:
-            # Default to same distributions as `samplers_init` mean samplers.
-            priors = {key: copy.deepcopy(val[0]) for key, val in samplers_init.items()}
-        self.priors = priors
+        self.__name__ = module.__class__.__name__
 
     @property
     def module_params(self):
@@ -245,6 +111,137 @@ class BayesianLayer(Converter):
 
         return torch.stack(kl_divergence).sum()
 
+    def forward(self, *args, **kwargs) -> tuple[torch.tensor, torch.tensor]:
+        """Forward pass through module."""
+        raise NotImplementedError
+
+
+class BayesianLayer(Converter):
+    """Bayesian implementation of a generic PyTorch module."""
+
+    def __init__(
+        self,
+        module: torch.nn.Module,
+        samplers: dict = None,
+        samplers_init: dict = None,
+        priors: dict = None,
+        moment_propagator: MomentPropagator = None,
+        propagate_moments: bool = True,
+        *args,
+        **kwargs,
+    ):
+        """BayesianLayer initializer.
+
+        Args:
+            module: Module with a functional version present in torch.nn.functional.
+                For such modules, we'll search for learnable parameters, create
+                their Bayesian counterparts under the mean-field approximation for
+                two parameter distributions (i.e., param -> (param_mean, param_var))
+            samplers: Dictionary of distributions that are sampled to return
+                parameters of this layer (i.e., the variational distributions).
+                These should be uninitialized or partially initialized
+                distributions that accept inputs `loc` and `scale` and return
+                an object with a .sample() method which returns tensors
+                corresponding to sampled parameters.  For example,
+                samplers["weight"](loc=0.0, scale=1.0).sample()
+                must return a tensor of size (out_features, in_features) if
+                module = torch.nn.Linear(in_features, out_features)
+            samplers_init: Dictionary of samplers that can be sampled to reset
+                parameters of this layer.  Each value is a tuple corresponding
+                to the mean and (unscaled, see `scale_tform` usage) standard deviation
+                parameters (e.g., samplers_init["weight"][0].sample() should
+                return a shape (out_features, in_features) tensor defining
+                initial weight parameters).  Keys should match those in `samplers`.
+            priors: Dictionary of prior distributions over layer parameters.
+                These distributions should be initialized (like `samplers_init`)
+                and have a .sample() method returning a tensor of the same
+                size as the corresponding layer parameter and a .log_prob(x) method
+                returning the log of the PDF at input x in the distributions domain.
+                These distributions are used in self.compute_kl_divergence().
+                Keys should match those in `samplers`.
+            moment_propagator: Propagation module to propagate mean and variance
+                through this layer.
+            propagate_moments: Flag indicating forward pass should use
+                `moment_propagator` to compute the output mean and variance from
+                this layer.
+        """
+        super().__init__(module=module)
+
+        # Validate `module` compatability with this class and find associated
+        # functional from torch.nn.functional.
+        functional = get_torch_functional(module.__class__)
+        assert (
+            functional is not None
+        ), "`module` must have a functional version in torch.nn.functional to use this class!"
+        self.functional = functional
+
+        # Parametrize the distributions of the Bayesian counterparts of each
+        # named parameter.  Each distribution will be parametrized by a
+        # mean and unscaled st. dev. parameter.  These are stored as
+        # a ParameterList to simplify advanced training strategies (e.g.,
+        # freezing mean parameters and only training st. dev. parameters).
+        _module_params = torch.nn.ParameterDict()
+        for param in module.named_parameters():
+            _module_params[param[0]] = torch.nn.ParameterList(
+                [
+                    torch.empty(
+                        param[1].shape,
+                        device=param[1].device,
+                        dtype=param[1].dtype,
+                    ),
+                    torch.empty(
+                        param[1].shape,
+                        device=param[1].device,
+                        dtype=param[1].dtype,
+                    ),
+                ]
+            )  # (mean, unscaled standard deviation)
+        self._module_params = _module_params
+
+        # Set moment propagator.
+        self.propagate_moments = propagate_moments
+        if moment_propagator is None:
+            if len(_module_params) == 0:
+                # If this module doesn't have learnable parameters we'll
+                # default use the unscented transform.
+                moment_propagator = UnscentedTransform()
+            else:
+                # With learnable Bayesian parameters, we'll default to
+                # Monte Carlo sampling.
+                moment_propagator = MonteCarlo()
+        self.moment_propagator = moment_propagator
+
+        # Create samplers for each named parameter.
+        if samplers_init is None:
+            # Prepare (relatively arbitrary) default samplers.
+            samplers_init = {}
+            for key, val in _module_params.items():
+                samplers_init[key] = (
+                    dist.Uniform(
+                        low=-np.sqrt(val[0].shape[-1]),
+                        high=np.sqrt(val[0].shape[-1]),
+                    ),
+                    dist.Uniform(
+                        low=-8.0,
+                        high=-2.0,
+                    ),
+                )
+        self.samplers_init = samplers_init
+        self.reset_parameters()
+
+        # Initialize variational distribution samplers.
+        scale_tform = torch.nn.functional.softplus
+        self.scale_tform = scale_tform
+        if samplers is None:
+            samplers = {key: dist.Normal for key in _module_params.keys()}
+        self.samplers = samplers
+
+        # Set priors.
+        if priors is None:
+            # Default to same distributions as `samplers_init` mean samplers.
+            priors = {key: copy.deepcopy(val[0]) for key, val in samplers_init.items()}
+        self.priors = priors
+
     def forward(
         self,
         input_mu: Union[tuple, torch.tensor],
@@ -269,6 +266,175 @@ class BayesianLayer(Converter):
         return mu, var
 
 
+class BayesianLayerSafe(Converter):
+    """Bayesian implementation of a generic PyTorch module.
+
+    Compared to BayesianLayer, this Converter is expected to work in more
+    general cases at the expense of potentially increased memory costs."""
+
+    def __init__(
+        self,
+        module: torch.nn.Module,
+        samplers: dict = None,
+        samplers_init: dict = None,
+        priors: dict = None,
+        moment_propagator: MomentPropagator = None,
+        propagate_moments: bool = True,
+        *args,
+        **kwargs,
+    ):
+        """BayesianLayerSafe initializer.
+
+        Args:
+            module: Module with parameters that we wish to treat as distributions
+                (or in some cases, a module between Bayesian layers that we'll
+                wrap for compatibility purposes).
+            samplers: Dictionary of distributions that are sampled to return
+                parameters of this layer (i.e., the variational distributions).
+                These should be uninitialized or partially initialized
+                distributions that accept inputs `loc` and `scale` and return
+                an object with a .sample() method which returns tensors
+                corresponding to sampled parameters.  For example,
+                samplers["weight"](loc=0.0, scale=1.0).sample()
+                must return a tensor of size (out_features, in_features) if
+                module = torch.nn.Linear(in_features, out_features)
+            samplers_init: Dictionary of samplers that can be sampled to reset
+                parameters of this layer.  Each value is a tuple corresponding
+                to the mean and (unscaled, see `scale_tform` usage) standard deviation
+                parameters (e.g., samplers_init["weight"][0].sample() should
+                return a shape (out_features, in_features) tensor defining
+                initial weight parameters).  Keys should match those in `samplers`.
+            priors: Dictionary of prior distributions over layer parameters.
+                These distributions should be initialized (like `samplers_init`)
+                and have a .sample() method returning a tensor of the same
+                size as the corresponding layer parameter and a .log_prob(x) method
+                returning the log of the PDF at input x in the distributions domain.
+                These distributions are used in self.compute_kl_divergence().
+                Keys should match those in `samplers`.
+            moment_propagator: Propagation module to propagate mean and variance
+                through this layer.
+            propagate_moments: Flag indicating forward pass should use
+                `moment_propagator` to compute the output mean and variance from
+                this layer.
+        """
+        super().__init__(module=module)
+
+        # Store `module` and a copy of `module` to act as the mean and unscaled
+        # st. dev. parameters (rho), respectively.
+        mu = module
+        module_params = [p for p in module.named_parameters()]
+        if len(module_params) > 0:
+            # Prepare a copy of `module` to act as the unscaled st. dev. parameters.
+            rho = copy.deepcopy(module)
+            _module_params = {
+                key: (getattr(mu, key), getattr(rho, key)) for key, _ in module_params
+            }
+        else:
+            rho = None
+            _module_params = {key: (getattr(mu, key), None) for key, _ in module_params}
+        self.mu = mu
+        self.rho = rho
+        self._module_params = _module_params
+
+        # Create a copy of input `module` that we'll use for stochastic forward
+        # passes through this layer.
+        if rho is None:
+            self._module = None
+        else:
+            self._module = copy.deepcopy(module)
+
+        # Validate and set moment propagator.
+        self.propagate_moments = propagate_moments
+        if moment_propagator is None:
+            if len(module_params) == 0:
+                # If this module doesn't have learnable parameters we'll
+                # default use the unscented transform.
+                moment_propagator = UnscentedTransform()
+            else:
+                # With learnable Bayesian parameters, we'll default to
+                # Monte Carlo sampling.
+                moment_propagator = MonteCarlo()
+        assert isinstance(moment_propagator, MonteCarlo) or isinstance(
+            moment_propagator, UnscentedTransform
+        ), (
+            "`moment_propagator must be an instance of of MonteCarlo or "
+            "UnscentedTransform to use this Converter!"
+        )
+        self.moment_propagator = moment_propagator
+
+        # Create samplers for each named parameter.
+        if samplers_init is None:
+            # Prepare (relatively arbitrary) default samplers.
+            samplers_init = {}
+            for key, val in _module_params.items():
+                samplers_init[key] = (
+                    dist.Uniform(
+                        low=-np.sqrt(val[0].shape[-1]),
+                        high=np.sqrt(val[0].shape[-1]),
+                    ),
+                    dist.Uniform(
+                        low=-8.0,
+                        high=-2.0,
+                    ),
+                )
+        self.samplers_init = samplers_init
+        self.reset_parameters()
+
+        # Initialize variational distribution samplers.
+        scale_tform = torch.nn.functional.softplus
+        self.scale_tform = scale_tform
+        if samplers is None:
+            samplers = {key: dist.Normal for key in _module_params.keys()}
+        self.samplers = samplers
+
+        # Set priors.
+        if priors is None:
+            # Default to same distributions as `samplers_init` mean samplers.
+            priors = {key: copy.deepcopy(val[0]) for key, val in samplers_init.items()}
+        self.priors = priors
+
+    @property
+    def module(self) -> torch.nn.Module:
+        """Instance of same class as self.mu but with sampled parameters."""
+        if self.rho is None:
+            # If rho is None, we don't have any parameters to sample so we can
+            # just return self.mu.
+            return self.mu
+        else:
+            # In this case, we want to resample parameters of self._module.
+            params = {key: val for key, val in self._module.named_parameters()}
+            params_sampled = self.module_params
+            for param_name, param in params.items():
+                param.data = params_sampled[param_name]
+
+            return self._module
+
+    def forward(
+        self,
+        input_mu: Union[tuple, torch.tensor],
+        input_var: torch.tensor = None,
+        *args,
+        **kwargs,
+    ) -> tuple[torch.tensor, torch.tensor]:
+        """Forward pass through layer."""
+        # Repackage `input_mu` if passed as a tuple (this allows the input mean
+        # and variance to be passed as forward(x) where x = (mu, var)).
+        if isinstance(input_mu, tuple):
+            input_mu, input_var = input_mu
+
+        # Propagate mean and variance through layer.
+        if self.propagate_moments:
+            mu, var = self.moment_propagator(
+                module=self, input_mu=input_mu, input_var=input_var
+            )
+        else:
+            # Compute forward pass with a random sample of parameters.
+            mu = self.module(input=input_mu, *args, **kwargs)
+            var = None
+
+        return mu, var
+
+
 class ForwardPassMean(Converter):
     """General layer wrapper that passes mean as input and ignores variance."""
 
@@ -284,9 +450,9 @@ class ForwardPassMean(Converter):
         with out_w[0] == out
 
         Args:
-            layer: Layer to be wrapped to accomodate two input forward pass.
+            module: Module to be wrapped to accomodate two input forward pass.
         """
-        super().__init__()
+        super().__init__(module=module)
         self.layer = module
 
     def forward(

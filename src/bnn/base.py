@@ -6,9 +6,26 @@ from typing import Any
 import torch
 
 import bnn.modules
-from bnn.modules import BayesianLayer, ForwardPassMean
+from bnn.modules import BayesianLayer, BayesianLayerSafe
 import bnn.inference
-from utils.misc import get_torch_functional
+
+
+# List out torch.nn modules known to be compatbiel with BayesianLayer.  Other
+# layers will default to using BayesianLayerSafe.
+BAYESIAN_LAYER_COMPATIBLE = [
+    "Linear",
+    "Conv1d",
+    "Conv2d",
+    "Conv3d",
+    "ReLU",
+    "LeakyReLU",
+    "AvgPool1d",
+    "AvgPool2d",
+    "AvgPool3d",
+    "MaxPool1d",
+    "MaxPool2d",
+    "MaxPool3d",
+]
 
 
 def set_requires_grad_loc_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
@@ -60,6 +77,7 @@ def convert_to_bnn_(
     converter_kwargs: dict = {},
     converter_kwargs_global: dict = {},
     named_modules_to_convert: list = None,
+    data_probe_kwargs: dict = {},
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -100,10 +118,13 @@ def convert_to_bnn_(
         module = model.get_submodule(leaf)
         module_name = module.__class__.__name__
 
-        # Use default Bayesian layer constructor (which works for layers with
-        # functionals in torch.nn.functional), otherwise fallback to a mean
-        # passthrough layer.
-        functional = get_torch_functional(module.__class__)
+        # Search for an appropriate module converter in order: custom converters
+        # for this named module, BayesianLayer for modules listed in
+        # BAYESIAN_LAYER_COMPATIBLE (NOTE: this list was manually defined and many
+        # modules in torch.nn that are compatible with BayesianLayer haven't been
+        # added)., or finally using the BayesianLayerSafe converter which should
+        # work for most modules but may be less efficient than custom or
+        # BayesianLayer conversions.
         module_kwargs = converter_kwargs_global | converter_kwargs.pop(module_name, {})
         if hasattr(bnn.modules, module_name):
             # If a custom layer exists for this named layer, we'll use that by default.
@@ -111,7 +132,7 @@ def convert_to_bnn_(
                 module=module, **module_kwargs
             )
             model.set_submodule(leaf, custom_layer)
-        elif functional is not None:
+        elif module.__class__.__name__ in BAYESIAN_LAYER_COMPATIBLE:
             # Search for a good default moment propagator.
             kwarg_overrides = {}
             if "moment_propagator" not in module_kwargs.keys():
@@ -126,8 +147,10 @@ def convert_to_bnn_(
             model.set_submodule(leaf, bayesian_layer)
         else:
             # Use generic mean passthrough layer for compatibility with Bayesian layers.
-            passthrough_layer = ForwardPassMean(module=module, **module_kwargs)
-            model.set_submodule(leaf, passthrough_layer)
+            bayesian_layer = BayesianLayerSafe(module=module, **module_kwargs)
+            model.set_submodule(leaf, bayesian_layer)
+            # passthrough_layer = ForwardPassMean(module=module, **module_kwargs)
+            # model.set_submodule(leaf, passthrough_layer)
 
 
 class BNN(torch.nn.Module):
