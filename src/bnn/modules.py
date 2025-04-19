@@ -12,7 +12,22 @@ from bnn.losses import kl_divergence_sampled
 from utils.misc import get_torch_functional
 
 
-class BayesianLayer(torch.nn.Module):
+class Converter(torch.nn.Module):
+    """Base class for Converter modules to make PyTorch modules BNN compatible."""
+
+    def __init__(module: torch.nn.Module, *args, **kwargs):
+        super().__init__()
+
+    def forward(
+        self,
+        input_mu: Union[tuple, torch.tensor],
+        input_var: torch.tensor = None,
+    ) -> tuple[torch.tensor, torch.tensor]:
+        """Forward pass through module."""
+        raise NotImplementedError
+
+
+class BayesianLayer(Converter):
     """Bayesian implementation of a generic PyTorch module."""
 
     def __init__(
@@ -23,6 +38,8 @@ class BayesianLayer(torch.nn.Module):
         priors: dict = None,
         moment_propagator: MomentPropagator = None,
         propagate_moments: bool = True,
+        *args,
+        **kwargs,
     ):
         """BayesianLayer initializer.
 
@@ -112,8 +129,8 @@ class BayesianLayer(torch.nn.Module):
             for key, val in _module_params.items():
                 samplers_init[key] = (
                     dist.Uniform(
-                        low=-np.sqrt(val[0].numel()),
-                        high=np.sqrt(val[0].numel()),
+                        low=-np.sqrt(val[0].shape[-1]),
+                        high=np.sqrt(val[0].shape[-1]),
                     ),
                     dist.Uniform(
                         low=-8.0,
@@ -252,10 +269,10 @@ class BayesianLayer(torch.nn.Module):
         return mu, var
 
 
-class ForwardPassMean(torch.nn.Module):
+class ForwardPassMean(Converter):
     """General layer wrapper that passes mean as input and ignores variance."""
 
-    def __init__(self, module: torch.nn.Module):
+    def __init__(self, module: torch.nn.Module, *args, **kwargs):
         """Initializer for ForwardPassMean wrapper.
 
         This module is designed to wrap modules whose forward call accepts a

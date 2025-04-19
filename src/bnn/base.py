@@ -1,11 +1,12 @@
-"""Bayesian neural networks utilities (e.g., NN to BNN converters)."""
+"""Bayesian neural network base module(s) and utilities."""
 
 import re
+from typing import Any
 
 import torch
 
-import bnn.layers
-from bnn.layers import BayesianLayer, ForwardPassMean
+import bnn.modules
+from bnn.modules import BayesianLayer, ForwardPassMean
 import bnn.inference
 from utils.misc import get_torch_functional
 
@@ -56,18 +57,32 @@ def set_requires_grad_scale_(model: torch.nn.Module, requires_grad: bool) -> lis
 
 def convert_to_bnn_(
     model: torch.nn.Module,
-    bayesian_layer_kwargs: dict = {},
+    converter_kwargs: dict = {},
+    converter_kwargs_global: dict = {},
+    named_modules_to_convert: list = None,
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
     Args:
         model: Model to be converted to Bayesian counterpart.
-        bayesian_layer_kwargs: Additional keyword arguments passed to
-            initialization of each Bayesian layer.
+        converter_kwargs: Additional keyword arguments passed to
+            initialization of named Bayesian layers.  For example, if `model`
+            has a module named "module1", we'll convert "module1" as
+            Converter(module1, **converter_kwargs["module1]) where
+            Converter is a module converter.
+        converter_kwargs_global: Keyword arguments that we'll merge
+            with values of bayesian_module_kwargs as, e.g.,
+            Converter(module1, **(converter_kwargs_global | converter_kwargs["module1]))
+        named_modules_to_convert: List of named modules that we wish to
+            convert to Bayesian modules (i.e., modules whose learnable parameters
+            we wish to treat as distributions).
     """
     # Search for modules of `model` to convert, removing stem modules from the
     # list (we just want the leaf modules that contain parameters).
-    modules = [m for m in model.named_modules()]
+    if named_modules_to_convert is None:
+        modules = [m for m in model.named_modules()]
+    else:
+        modules = named_modules_to_convert
     leaf_names = []
     for module in modules[::-1]:
         # If other modules are a prefix of this modules name, we'll assume they
@@ -89,29 +104,61 @@ def convert_to_bnn_(
         # functionals in torch.nn.functional), otherwise fallback to a mean
         # passthrough layer.
         functional = get_torch_functional(module.__class__)
-        if hasattr(bnn.layers, module_name):
+        module_kwargs = converter_kwargs_global | converter_kwargs.pop(module_name, {})
+        if hasattr(bnn.modules, module_name):
             # If a custom layer exists for this named layer, we'll use that by default.
-            custom_layer = getattr(bnn.layers, module_name)(
-                module=module, **bayesian_layer_kwargs
+            custom_layer = getattr(bnn.modules, module_name)(
+                module=module, **module_kwargs
             )
             model.set_submodule(leaf, custom_layer)
         elif functional is not None:
             # Search for a good default moment propagator.
             kwarg_overrides = {}
-            if "moment_propagator" not in bayesian_layer_kwargs.keys():
+            if "moment_propagator" not in module_kwargs.keys():
                 if hasattr(bnn.inference, module_name):
                     propagator = getattr(bnn.inference, module_name)
                     kwarg_overrides["moment_propagator"] = propagator()
 
             # Create Bayesian version of this layer.
             bayesian_layer = BayesianLayer(
-                module=module, **(bayesian_layer_kwargs | kwarg_overrides)
+                module=module, **(module_kwargs | kwarg_overrides)
             )
             model.set_submodule(leaf, bayesian_layer)
         else:
             # Use generic mean passthrough layer for compatibility with Bayesian layers.
-            passthrough_layer = ForwardPassMean(module=module)
+            passthrough_layer = ForwardPassMean(module=module, **module_kwargs)
             model.set_submodule(leaf, passthrough_layer)
+
+
+class BNN(torch.nn.Module):
+    """Bayesian neural network base class."""
+
+    def __init__(self, nn: torch.nn.Module, *args, **kwargs):
+        """Initialize Bayesian neural network.
+
+        Args:
+            nn: Neural network to be converted to a Bayesian neural network.
+            args, kwargs: Passed as
+                bnn.utils.convert_to_bnn_(model=nn, *args, **kwargs)
+        """
+        super().__init__()
+
+        # Convert the neural network to a Bayesian neural network.
+        convert_to_bnn_(model=nn, *args, **kwargs)
+        self.bnn = nn
+
+    def set_requires_grad(self, property: str, requires_grad: bool) -> None:
+        """Modify requires grad property of BNN parameters."""
+        if property == "loc":
+            set_requires_grad_loc_(model=self, requires_grad=requires_grad)
+        elif property == "scale":
+            set_requires_grad_scale_(model=self, requires_grad=requires_grad)
+        else:
+            ValueError("Input `property` must be `loc` or `scale`.")
+
+    def forward(self, *args, **kwargs) -> Any:
+        """Forward pass through BNN."""
+        return self.bnn(*args, **kwargs)
 
 
 if __name__ == "__main__":
@@ -128,3 +175,13 @@ if __name__ == "__main__":
     )
     convert_to_bnn_(model=model)
     out = model(torch.ones(1, in_features))
+
+    # Create a BNN wrapper for our model.
+    model = mlp.MLP(
+        in_features=in_features,
+        out_features=out_features,
+        n_hidden_layers=3,
+        activation=torch.nn.LeakyReLU,
+    )
+    bnn = BNN(nn=model)
+    bnn(torch.randn((1, 3)))
