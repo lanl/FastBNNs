@@ -37,6 +37,16 @@ class Converter(torch.nn.Module):
             for key, val in samplers.items()
         }
 
+    @property
+    def named_parameters_mean(self) -> dict:
+        """Return dictionary of parameter means."""
+        return {key: val[0] for key, val in self._module_params.items()}
+
+    @property
+    def named_parameters_rho(self) -> dict:
+        """Return dictionary of parameter rho's (unscaled st. dev.)."""
+        return {key: val[1] for key, val in self._module_params.items()}
+
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""
         for key, params in self._module_params.items():
@@ -44,15 +54,15 @@ class Converter(torch.nn.Module):
                 for param, sampler in zip(params, self.samplers_init[key]):
                     param.data = sampler.sample(sample_shape=param.shape)
 
-    def set_requires_grad_loc(self, requires_grad: bool) -> None:
-        """Set requires_grad property of all loc parameters."""
-        for loc_scale in self._module_params.values():
-            loc_scale[0].requires_grad = requires_grad
+    def set_requires_grad_mean(self, requires_grad: bool) -> None:
+        """Set requires_grad property of all mean parameters."""
+        for mean_rho in self._module_params.values():
+            mean_rho[0].requires_grad = requires_grad
 
-    def set_requires_grad_scale(self, requires_grad: bool) -> None:
-        """Set requires_grad property of all scale parameters."""
-        for loc_scale in self._module_params.values():
-            loc_scale[1].requires_grad = requires_grad
+    def set_requires_grad_rho(self, requires_grad: bool) -> None:
+        """Set requires_grad property of all variance parameters."""
+        for mean_rho in self._module_params.values():
+            mean_rho[1].requires_grad = requires_grad
 
     def compute_kl_divergence(
         self, priors: Union[dict, dist.Distribution] = None, n_samples: int = 1

@@ -28,45 +28,45 @@ BAYESIAN_LAYER_COMPATIBLE = [
 ]
 
 
-def set_requires_grad_loc_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
-    """Change requires_grad of loc parameters of Bayesian layers in `model`.
+def set_requires_grad_mean_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
+    """Change requires_grad of mean parameters of Bayesian layers in `model`.
 
     Args:
-        model: Model for which we'll call .set_requires_grad_loc() on all
+        model: Model for which we'll call .set_requires_grad_mean() on all
             BayesianLayer modules.
         requires_grad: Value we wish to set for requires_grad property of
-            Bayesian layer loc parameters.
+            Bayesian layer mean parameters.
 
     Return:
         set: Lists of strings containing module names that
-            had .set_requires_grad_loc() called.
+            had .set_requires_grad_mean() called.
     """
     set = []
     for module in model.named_modules():
-        if hasattr(module[1], "set_requires_grad_loc"):
-            module[1].set_requires_grad_loc(requires_grad=requires_grad)
+        if hasattr(module[1], "set_requires_grad_mean"):
+            module[1].set_requires_grad_mean(requires_grad=requires_grad)
             set.append(module[0])
 
     return set
 
 
-def set_requires_grad_scale_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
-    """Change requires_grad of scale parameters of Bayesian layers in `model`.
+def set_requires_grad_rho_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
+    """Change requires_grad of rho (unscaled st. dev.) of Bayesian layers in `model`.
 
     Args:
-        model: Model for which we'll call .set_requires_grad_scale() on all
+        model: Model for which we'll call .set_requires_grad_rho() on all
             BayesianLayer modules.
         requires_grad: Value we wish to set for requires_grad property of
-            Bayesian layer scale parameters.
+            Bayesian layer rho (unscaled st. dev.) parameters.
 
     Return:
         set: Lists of strings containing module names that
-            had .set_requires_grad_scale() called.
+            had .set_requires_grad_rho() called.
     """
     set = []
     for module in model.named_modules():
-        if hasattr(module[1], "set_requires_grad_scale"):
-            module[1].set_requires_grad_scale(requires_grad=requires_grad)
+        if hasattr(module[1], "set_requires_grad_rho"):
+            module[1].set_requires_grad_rho(requires_grad=requires_grad)
             set.append(module[0])
 
     return set
@@ -172,12 +172,12 @@ class BNN(torch.nn.Module):
 
     def set_requires_grad(self, property: str, requires_grad: bool) -> None:
         """Modify requires grad property of BNN parameters."""
-        if property == "loc":
-            set_requires_grad_loc_(model=self, requires_grad=requires_grad)
-        elif property == "scale":
-            set_requires_grad_scale_(model=self, requires_grad=requires_grad)
+        if property == "mean":
+            set_requires_grad_mean_(model=self, requires_grad=requires_grad)
+        elif property == "rho":
+            set_requires_grad_rho_(model=self, requires_grad=requires_grad)
         else:
-            ValueError("Input `property` must be `loc` or `scale`.")
+            ValueError("Input `property` must be `mean` or `rho`.")
 
     def forward(self, *args, **kwargs) -> Any:
         """Forward pass through BNN."""
