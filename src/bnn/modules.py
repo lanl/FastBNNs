@@ -32,10 +32,7 @@ class Converter(torch.nn.Module):
             for key, val in self.samplers.items()
         }
 
-        return {
-            key: (None if self._module_params[key] is None else val.sample())
-            for key, val in samplers.items()
-        }
+        return {key: val.sample() for key, val in samplers.items()}
 
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""

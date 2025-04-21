@@ -228,7 +228,7 @@ class Linear(MomentPropagator):
 
         # Compute analytical result under mean-field approximation following
         # https://doi.org/10.48550/arXiv.2402.14532
-        if "bias" in module._module_params.keys():
+        if "bias_mean" in module._module_params.keys():
             bias_params = (
                 module._module_params["bias_mean"],
                 module._module_params["bias_rho"],

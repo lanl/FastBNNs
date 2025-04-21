@@ -101,7 +101,8 @@ def convert_to_bnn_(
             )
             model.set_submodule(leaf, bayesian_layer)
         else:
-            # Use generic mean passthrough layer for compatibility with Bayesian layers.
+            # Use the "safe" converter which is expected to work for more
+            # modules than `BayesianLayer`.
             bayesian_layer = BayesianLayerSafe(module=module, **module_kwargs)
             model.set_submodule(leaf, bayesian_layer)
 
