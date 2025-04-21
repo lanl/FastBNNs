@@ -6,7 +6,15 @@ from typing import Union
 import inspect
 import re
 
+import torch
 import torch.nn.functional as F
+
+
+def set_requires_grad(module: torch.nn.Module, requires_grad: bool, tag: str) -> None:
+    """Set requires_grad property of all parameters whose name contains `tag`."""
+    for param_name, param_value in module.named_parameters():
+        if tag in param_name:
+            param_value.requires_grad = requires_grad
 
 
 def get_torch_functional(torch_module_class: type) -> Union[Callable, None]:

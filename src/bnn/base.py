@@ -1,7 +1,7 @@
 """Bayesian neural network base module(s) and utilities."""
 
 import re
-from typing import Any
+from typing import Any, Iterator
 
 import torch
 
@@ -28,56 +28,11 @@ BAYESIAN_LAYER_COMPATIBLE = [
 ]
 
 
-def set_requires_grad_mean_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
-    """Change requires_grad of mean parameters of Bayesian layers in `model`.
-
-    Args:
-        model: Model for which we'll call .set_requires_grad_mean() on all
-            BayesianLayer modules.
-        requires_grad: Value we wish to set for requires_grad property of
-            Bayesian layer mean parameters.
-
-    Return:
-        set: Lists of strings containing module names that
-            had .set_requires_grad_mean() called.
-    """
-    set = []
-    for module in model.named_modules():
-        if hasattr(module[1], "set_requires_grad_mean"):
-            module[1].set_requires_grad_mean(requires_grad=requires_grad)
-            set.append(module[0])
-
-    return set
-
-
-def set_requires_grad_rho_(model: torch.nn.Module, requires_grad: bool) -> list[str]:
-    """Change requires_grad of rho (unscaled st. dev.) of Bayesian layers in `model`.
-
-    Args:
-        model: Model for which we'll call .set_requires_grad_rho() on all
-            BayesianLayer modules.
-        requires_grad: Value we wish to set for requires_grad property of
-            Bayesian layer rho (unscaled st. dev.) parameters.
-
-    Return:
-        set: Lists of strings containing module names that
-            had .set_requires_grad_rho() called.
-    """
-    set = []
-    for module in model.named_modules():
-        if hasattr(module[1], "set_requires_grad_rho"):
-            module[1].set_requires_grad_rho(requires_grad=requires_grad)
-            set.append(module[0])
-
-    return set
-
-
 def convert_to_bnn_(
     model: torch.nn.Module,
     converter_kwargs: dict = {},
     converter_kwargs_global: dict = {},
     named_modules_to_convert: list = None,
-    data_probe_kwargs: dict = {},
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -149,8 +104,6 @@ def convert_to_bnn_(
             # Use generic mean passthrough layer for compatibility with Bayesian layers.
             bayesian_layer = BayesianLayerSafe(module=module, **module_kwargs)
             model.set_submodule(leaf, bayesian_layer)
-            # passthrough_layer = ForwardPassMean(module=module, **module_kwargs)
-            # model.set_submodule(leaf, passthrough_layer)
 
 
 class BNN(torch.nn.Module):
@@ -158,6 +111,13 @@ class BNN(torch.nn.Module):
 
     def __init__(self, nn: torch.nn.Module, *args, **kwargs):
         """Initialize Bayesian neural network.
+
+
+        WARNINGS:
+            (1): Some functionality of this class relies on parameter names
+                containing the suffixes "_mean" and "_rho".  If the input `nn`
+                has parameters containing these strings, this class may not
+                behave as expected!
 
         Args:
             nn: Neural network to be converted to a Bayesian neural network.
@@ -170,14 +130,17 @@ class BNN(torch.nn.Module):
         convert_to_bnn_(model=nn, *args, **kwargs)
         self.bnn = nn
 
-    def set_requires_grad(self, property: str, requires_grad: bool) -> None:
-        """Modify requires grad property of BNN parameters."""
-        if property == "mean":
-            set_requires_grad_mean_(model=self, requires_grad=requires_grad)
-        elif property == "rho":
-            set_requires_grad_rho_(model=self, requires_grad=requires_grad)
-        else:
-            ValueError("Input `property` must be `mean` or `rho`.")
+    def named_parameters_mean(self) -> Iterator:
+        """Return named mean parameters."""
+        for name, param in self.named_parameters():
+            if "_mean" in name:
+                yield name, param
+
+    def named_parameters_rho(self) -> Iterator:
+        """Return named rho parameters."""
+        for name, param in self.named_parameters():
+            if "_rho" in name:
+                yield name, param
 
     def forward(self, *args, **kwargs) -> Any:
         """Forward pass through BNN."""

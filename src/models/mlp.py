@@ -15,6 +15,7 @@ class MLP(torch.nn.Module):
         activation: type = torch.nn.LeakyReLU,
     ):
         super().__init__()
+
         modules = [
             torch.nn.Linear(in_features=in_features, out_features=hidden_features),
         ]

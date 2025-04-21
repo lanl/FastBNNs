@@ -26,8 +26,8 @@ class Converter(torch.nn.Module):
         # as self._module_params.
         samplers = {
             key: val(
-                loc=self._module_params[key][0],
-                scale=self.scale_tform(self._module_params[key][1]),
+                loc=self._module_params[key + "_mean"],
+                scale=self.scale_tform(self._module_params[key + "_rho"]),
             )
             for key, val in self.samplers.items()
         }
@@ -37,32 +37,11 @@ class Converter(torch.nn.Module):
             for key, val in samplers.items()
         }
 
-    @property
-    def named_parameters_mean(self) -> dict:
-        """Return dictionary of parameter means."""
-        return {key: val[0] for key, val in self._module_params.items()}
-
-    @property
-    def named_parameters_rho(self) -> dict:
-        """Return dictionary of parameter rho's (unscaled st. dev.)."""
-        return {key: val[1] for key, val in self._module_params.items()}
-
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""
-        for key, params in self._module_params.items():
-            if params is not None:
-                for param, sampler in zip(params, self.samplers_init[key]):
-                    param.data = sampler.sample(sample_shape=param.shape)
-
-    def set_requires_grad_mean(self, requires_grad: bool) -> None:
-        """Set requires_grad property of all mean parameters."""
-        for mean_rho in self._module_params.values():
-            mean_rho[0].requires_grad = requires_grad
-
-    def set_requires_grad_rho(self, requires_grad: bool) -> None:
-        """Set requires_grad property of all variance parameters."""
-        for mean_rho in self._module_params.values():
-            mean_rho[1].requires_grad = requires_grad
+        for key, param in self._module_params.items():
+            if param is not None:
+                param.data = self.samplers_init[key].sample(sample_shape=param.shape)
 
     def compute_kl_divergence(
         self, priors: Union[dict, dist.Distribution] = None, n_samples: int = 1
@@ -100,8 +79,10 @@ class Converter(torch.nn.Module):
                 kl_divergence.append(
                     dist.kl_divergence(
                         self.samplers[param_name](
-                            loc=self._module_params[param_name][0],
-                            scale=self.scale_tform(self._module_params[param_name][1]),
+                            loc=self._module_params[param_name + "_mean"],
+                            scale=self.scale_tform(
+                                self._module_params[param_name + "_rho"]
+                            ),
                         ),
                         param_prior,
                     ).sum()
@@ -111,8 +92,10 @@ class Converter(torch.nn.Module):
                 kl_divergence.append(
                     kl_divergence_sampled(
                         dist0=self.samplers[param_name](
-                            loc=self._module_params[param_name][0],
-                            scale=self.scale_tform(self._module_params[param_name][1]),
+                            loc=self._module_params[param_name + "_mean"],
+                            scale=self.scale_tform(
+                                self._module_params[param_name + "_rho"]
+                            ),
                         ),
                         dist1=param_prior,
                         n_samples=n_samples,
@@ -159,7 +142,7 @@ class BayesianLayer(Converter):
             samplers_init: Dictionary of samplers that can be sampled to reset
                 parameters of this layer.  Each value is a tuple corresponding
                 to the mean and (unscaled, see `scale_tform` usage) standard deviation
-                parameters (e.g., samplers_init["weight"][0].sample() should
+                parameters (e.g., samplers_init["weight_mean"].sample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
             priors: Dictionary of prior distributions over layer parameters.
@@ -187,25 +170,21 @@ class BayesianLayer(Converter):
 
         # Parametrize the distributions of the Bayesian counterparts of each
         # named parameter.  Each distribution will be parametrized by a
-        # mean and unscaled st. dev. parameter.  These are stored as
-        # a ParameterList to simplify advanced training strategies (e.g.,
-        # freezing mean parameters and only training st. dev. parameters).
+        # mean and unscaled st. dev. parameter (rho) stored separately with
+        # _mean and _rho tags for clarity (as opposed to, e.g., storing as a
+        # parameter list).
         _module_params = torch.nn.ParameterDict()
         for param in module.named_parameters():
-            _module_params[param[0]] = torch.nn.ParameterList(
-                [
-                    torch.empty(
-                        param[1].shape,
-                        device=param[1].device,
-                        dtype=param[1].dtype,
-                    ),
-                    torch.empty(
-                        param[1].shape,
-                        device=param[1].device,
-                        dtype=param[1].dtype,
-                    ),
-                ]
-            )  # (mean, unscaled standard deviation)
+            _module_params[param[0] + "_mean"] = torch.empty(
+                param[1].shape,
+                device=param[1].device,
+                dtype=param[1].dtype,
+            )
+            _module_params[param[0] + "_rho"] = torch.empty(
+                param[1].shape,
+                device=param[1].device,
+                dtype=param[1].dtype,
+            )
         self._module_params = _module_params
 
         # Set moment propagator.
@@ -226,16 +205,16 @@ class BayesianLayer(Converter):
             # Prepare (relatively arbitrary) default samplers.
             samplers_init = {}
             for key, val in _module_params.items():
-                samplers_init[key] = (
-                    dist.Uniform(
-                        low=-np.sqrt(val[0].shape[-1]),
-                        high=np.sqrt(val[0].shape[-1]),
-                    ),
-                    dist.Uniform(
+                if "_mean" in key:
+                    samplers_init[key] = dist.Uniform(
+                        low=-np.sqrt(val.shape[-1]),
+                        high=np.sqrt(val.shape[-1]),
+                    )
+                else:
+                    samplers_init[key] = dist.Uniform(
                         low=-8.0,
-                        high=-2.0,
-                    ),
-                )
+                        high=-5.0,
+                    )
         self.samplers_init = samplers_init
         self.reset_parameters()
 
@@ -243,13 +222,13 @@ class BayesianLayer(Converter):
         scale_tform = torch.nn.functional.softplus
         self.scale_tform = scale_tform
         if samplers is None:
-            samplers = {key: dist.Normal for key in _module_params.keys()}
+            samplers = {key: dist.Normal for key, _ in module.named_parameters()}
         self.samplers = samplers
 
         # Set priors.
         if priors is None:
             # Default to same distributions as `samplers_init` mean samplers.
-            priors = {key: copy.deepcopy(val[0]) for key, val in samplers_init.items()}
+            priors = {key: samplers_init[key + "_mean"] for key in samplers.keys()}
         self.priors = priors
 
     def forward(
@@ -311,7 +290,7 @@ class BayesianLayerSafe(Converter):
             samplers_init: Dictionary of samplers that can be sampled to reset
                 parameters of this layer.  Each value is a tuple corresponding
                 to the mean and (unscaled, see `scale_tform` usage) standard deviation
-                parameters (e.g., samplers_init["weight"][0].sample() should
+                parameters (e.g., samplers_init["weight_mean"].sample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
             priors: Dictionary of prior distributions over layer parameters.
@@ -333,15 +312,17 @@ class BayesianLayerSafe(Converter):
         # st. dev. parameters (rho), respectively.
         mu = module
         module_params = [p for p in module.named_parameters()]
+        _module_params = torch.nn.ParameterDict()
         if len(module_params) > 0:
             # Prepare a copy of `module` to act as the unscaled st. dev. parameters.
             rho = copy.deepcopy(module)
-            _module_params = {
-                key: (getattr(mu, key), getattr(rho, key)) for key, _ in module_params
-            }
+            for key, _ in module_params:
+                _module_params[key + "_mean"] = getattr(mu, key)
+                _module_params[key + "_rho"] = getattr(rho, key)
         else:
-            rho = None
-            _module_params = {key: (getattr(mu, key), None) for key, _ in module_params}
+            for key, _ in module_params:
+                _module_params[key + "_mean"] = getattr(mu, key)
+                _module_params[key + "_rho"] = None
         self.mu = mu
         self.rho = rho
         self._module_params = _module_params
@@ -377,16 +358,16 @@ class BayesianLayerSafe(Converter):
             # Prepare (relatively arbitrary) default samplers.
             samplers_init = {}
             for key, val in _module_params.items():
-                samplers_init[key] = (
-                    dist.Uniform(
-                        low=-np.sqrt(val[0].shape[-1]),
-                        high=np.sqrt(val[0].shape[-1]),
-                    ),
-                    dist.Uniform(
+                if "_mean" in key:
+                    samplers_init[key] = dist.Uniform(
+                        low=-np.sqrt(val.shape[-1]),
+                        high=np.sqrt(val.shape[-1]),
+                    )
+                else:
+                    samplers_init[key] = dist.Uniform(
                         low=-8.0,
-                        high=-2.0,
-                    ),
-                )
+                        high=-5.0,
+                    )
         self.samplers_init = samplers_init
         self.reset_parameters()
 
@@ -394,13 +375,13 @@ class BayesianLayerSafe(Converter):
         scale_tform = torch.nn.functional.softplus
         self.scale_tform = scale_tform
         if samplers is None:
-            samplers = {key: dist.Normal for key in _module_params.keys()}
+            samplers = {key: dist.Normal for key, _ in module.named_parameters()}
         self.samplers = samplers
 
         # Set priors.
         if priors is None:
             # Default to same distributions as `samplers_init` mean samplers.
-            priors = {key: copy.deepcopy(val[0]) for key, val in samplers_init.items()}
+            priors = {key: samplers_init[key + "_mean"] for key in samplers.keys()}
         self.priors = priors
 
     @property

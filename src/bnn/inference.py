@@ -229,17 +229,20 @@ class Linear(MomentPropagator):
         # Compute analytical result under mean-field approximation following
         # https://doi.org/10.48550/arXiv.2402.14532
         if "bias" in module._module_params.keys():
-            bias_params = module._module_params["bias"]
+            bias_params = (
+                module._module_params["bias_mean"],
+                module._module_params["bias_rho"],
+            )
         else:
             bias_params = (None, None)
         mu = module.functional(
             input=input_mu,
-            weight=module._module_params["weight"][0],
+            weight=module._module_params["weight_mean"],
             bias=bias_params[0],
         )
         var = module.functional(
             input=input_mu**2,
-            weight=module.scale_tform(module._module_params["weight"][1]) ** 2,
+            weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
             bias=(
                 None
                 if bias_params[1] is None
@@ -251,8 +254,8 @@ class Linear(MomentPropagator):
         if input_var is not None:
             var += module.functional(
                 input=input_var,
-                weight=module._module_params["weight"][0] ** 2
-                + module.scale_tform(module._module_params["weight"][1]) ** 2,
+                weight=module._module_params["weight_mean"] ** 2
+                + module.scale_tform(module._module_params["weight_rho"]) ** 2,
                 bias=None,
             )
 
