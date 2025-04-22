@@ -1,6 +1,7 @@
 """Collections of Bayesian neural network layers."""
 
 import copy
+import functools
 import re
 import sys
 from typing import Union
@@ -16,12 +17,13 @@ from bnn.priors import Distribution
 from utils.misc import get_torch_functional
 
 
-# List out torch.nn modules known to be compatible with BayesianLayer.  Other
-# layers will default to using BayesianLayerSafe.
-BAYESIAN_LAYER_COMPATIBLE = [
+# List out torch.nn modules whose functionals in torch.nn.functional can directly
+# replicate the corresponding torch.nn behavior (see torch.nn.Conv2d for an
+# example of when this is NOT the case, since the forward pass contains additional
+# logic/processing before the call to torch.nn.functional.conv2d()).
+HAS_COMPATIBLE_FUNCTIONAL = [
     "Linear",
-    "ReLU",
-    "LeakyReLU",
+    "Bilinear",
     "AvgPool1d",
     "AvgPool2d",
     "AvgPool3d",
@@ -78,38 +80,24 @@ def convert_to_bnn_(
         module = model.get_submodule(leaf)
         module_name = module.__class__.__name__
 
-        # Search for an appropriate module converter in order: custom converters
-        # for this named module, BayesianLayer for modules listed in
-        # BAYESIAN_LAYER_COMPATIBLE (NOTE: this list was manually defined and many
-        # modules in torch.nn that are compatible with BayesianLayer haven't been
-        # added)., or finally using the BayesianLayerSafe converter which should
-        # work for most modules but may be less efficient than custom or
-        # BayesianLayer conversions.
+        # Search for an appropriate module converter, defaulting to named converters
+        # sharing a name with this module.
         module_kwargs = converter_kwargs_global | converter_kwargs.pop(module_name, {})
         if hasattr(current_module, module_name):
-            # If a custom layer exists for this named layer, we'll use that by default.
-            custom_layer = getattr(current_module, module_name)(
+            # If a custom converter exists for this named layer, we'll use that by default.
+            bayesian_layer = getattr(current_module, module_name)(
                 module=module, **module_kwargs
             )
-            model.set_submodule(leaf, custom_layer)
-        elif module.__class__.__name__ in BAYESIAN_LAYER_COMPATIBLE:
-            # Search for a good default moment propagator.
-            kwarg_overrides = {}
-            if "moment_propagator" not in module_kwargs.keys():
-                if hasattr(bnn.inference, module_name):
-                    propagator = getattr(bnn.inference, module_name)
-                    kwarg_overrides["moment_propagator"] = propagator()
-
+        elif module.__class__.__name__ in HAS_COMPATIBLE_FUNCTIONAL:
             # Create Bayesian version of this layer.
-            bayesian_layer = BayesianLayer(
-                module=module, **(module_kwargs | kwarg_overrides)
-            )
-            model.set_submodule(leaf, bayesian_layer)
+            bayesian_layer = BayesianLayer(module=module, **module_kwargs)
         else:
             # Use the "safe" converter which is expected to work for more
             # modules than `BayesianLayer`.
             bayesian_layer = BayesianLayerSafe(module=module, **module_kwargs)
-            model.set_submodule(leaf, bayesian_layer)
+
+        # Reset submodule to the converted module.
+        model.set_submodule(leaf, bayesian_layer)
 
 
 class Converter(torch.nn.Module):
@@ -293,7 +281,11 @@ class BayesianLayer(Converter):
         # Set moment propagator.
         self.propagate_moments = propagate_moments
         if moment_propagator is None:
-            if len(_module_params) == 0:
+            if hasattr(bnn.inference, module.__class__.__name__):
+                # A custom propagator exists for this module so we'll use that.
+                propagator = getattr(bnn.inference, module.__class__.__name__)
+                moment_propagator = propagator()
+            elif len(_module_params) == 0:
                 # If this module doesn't have learnable parameters we'll
                 # default use the unscented transform.
                 moment_propagator = UnscentedTransform()
@@ -435,23 +427,30 @@ class BayesianLayerSafe(Converter):
         # on first use so that we don't waste memory if it's never needed).
         self._module = None
 
+        # Store a functional version of this module if possible (some modules
+        # won't have a functional, or their action can't be directly replicated
+        # through the functional).
+        if module.__class__.__name__ in HAS_COMPATIBLE_FUNCTIONAL:
+            self._functional = get_torch_functional(module.__class__)
+        else:
+            self._functional = None
+
         # Validate and set moment propagator.
+        # Set moment propagator.
         self.propagate_moments = propagate_moments
         if moment_propagator is None:
-            if len(module_params) == 0:
+            if hasattr(bnn.inference, module.__class__.__name__):
+                # A custom propagator exists for this module so we'll use that.
+                propagator = getattr(bnn.inference, module.__class__.__name__)
+                moment_propagator = propagator()
+            elif len(_module_params) == 0:
                 # If this module doesn't have learnable parameters we'll
-                # default use the unscented transform.
+                # default to the unscented transform.
                 moment_propagator = UnscentedTransform()
             else:
                 # With learnable Bayesian parameters, we'll default to
                 # Monte Carlo sampling.
                 moment_propagator = MonteCarlo()
-        assert isinstance(moment_propagator, MonteCarlo) or isinstance(
-            moment_propagator, UnscentedTransform
-        ), (
-            "`moment_propagator must be an instance of of MonteCarlo or "
-            "UnscentedTransform to use this Converter!"
-        )
         self.moment_propagator = moment_propagator
 
         # Create samplers for each named parameter.
@@ -461,8 +460,8 @@ class BayesianLayerSafe(Converter):
             for key, val in _module_params.items():
                 if "_mean" in key:
                     samplers_init[key] = dist.Uniform(
-                        low=-np.sqrt(val.shape[-1]),
-                        high=np.sqrt(val.shape[-1]),
+                        low=-1.0 / np.sqrt(val.shape[-1]),
+                        high=1.0 / np.sqrt(val.shape[-1]),
                     )
                 else:
                     samplers_init[key] = dist.Uniform(
@@ -486,22 +485,28 @@ class BayesianLayerSafe(Converter):
         self.priors = priors
 
     @property
-    def module(self) -> torch.nn.Module:
-        """Instance of same class as self.mu but with sampled parameters."""
-        if self.rho is None:
-            # If rho is None, we don't have any parameters to sample so we can
-            # just return self.mu.
-            return self.mu
-        else:
-            # In this case, we want to resample parameters of self._module.
-            if self._module is None:
-                self._module = copy.deepcopy(self.mu)
-            params = {key: val for key, val in self._module.named_parameters()}
-            params_sampled = self.module_params
-            for param_name, param in params.items():
-                param.data = params_sampled[param_name]
+    def functional(self) -> torch.nn.Module:
+        """Prepare a callable that acts like input `module` with random parameters."""
+        if self._functional is None:
+            # No functional is available/compatible with this converter so we'll use
+            # copies of the input `module` instead.
+            if self.rho is None:
+                # If rho is None, we don't have any parameters to sample so we can
+                # just return self.mu.
+                return self.mu
+            else:
+                # In this case, we want to resample parameters of self._module.
+                if self._module is None:
+                    self._module = copy.deepcopy(self.mu)
+                params = {key: val for key, val in self._module.named_parameters()}
+                params_sampled = self.module_params
+                for param_name, param in params.items():
+                    param.data = params_sampled[param_name]
 
-            return self._module
+                return self._module
+        else:
+            # Return the functional with sampled parameters pre-populated.
+            return functools.partial(self._functional, **self.module_params)
 
     def forward(
         self,
@@ -523,17 +528,17 @@ class BayesianLayerSafe(Converter):
             )
         else:
             # Compute forward pass with a random sample of parameters.
-            mu = self.module(input=input_mu, *args, **kwargs)
+            mu = self.functional(input=input_mu, *args, **kwargs)
             var = None
 
         return mu, var
 
 
-class ForwardPassMean(Converter):
-    """General layer wrapper that passes mean as input and ignores variance."""
+class PassThrough(Converter):
+    """General layer wrapper that applies module to both mean and variance inputs."""
 
     def __init__(self, module: torch.nn.Module, *args, **kwargs):
-        """Initializer for ForwardPassMean wrapper.
+        """Initializer for PassThrough wrapper.
 
         This module is designed to wrap modules whose forward call accepts a
         tensor and returns a tensor.  The intention is that we can use the
@@ -542,6 +547,8 @@ class ForwardPassMean(Converter):
         For example, if out = layer(input), then
         layer_w = ForwardPassMean(module=module) can be called as out_w = layer_w(input, Any)
         with out_w[0] == out
+        This is most useful for layers like torch.nn.Flatten() which will not change the
+        mean and variance values, only their shape.
 
         Args:
             module: Module to be wrapped to accomodate two input forward pass.
@@ -558,7 +565,7 @@ class ForwardPassMean(Converter):
         if isinstance(input_mu, tuple):
             input_mu, input_var = input_mu
 
-        return self.layer(input_mu), input_var
+        return self.layer(input_mu), self.layer(input_var)
 
 
 if __name__ == "__main__":
