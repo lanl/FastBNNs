@@ -1,7 +1,5 @@
 """Example of training a Bayesian MLP in Lightning."""
 
-import copy
-
 import lightning as L
 import matplotlib.pyplot as plt
 import numpy as np
@@ -51,9 +49,7 @@ batch_size = 128
 dataset = generic.SimulatedData(
     data_generator=data_generator, dataset_length=n_data, transform=noise_tform
 )
-dataloader = torch.utils.data.DataLoader(
-    dataset=dataset, batch_size=batch_size, shuffle=True
-)
+dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
 
 # Define optimizer and loss.
 n_batches = n_data // batch_size

@@ -33,7 +33,7 @@ bnn = bnn.to(device)
 # Define a prior (this one applies to all parameters in the model).
 prior = priors.Distribution(
     torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
-)
+).to(device)
 
 # Define a dataset.
 data_generator = generators.Generator(
