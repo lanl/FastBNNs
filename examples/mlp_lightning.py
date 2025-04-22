@@ -1,7 +1,8 @@
-"""Example of training a Bayesian MLP."""
+"""Example of training a Bayesian MLP in Lightning."""
 
 import copy
 
+import lightning as L
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -27,14 +28,17 @@ nn = mlp.MLP(
     activation=torch.nn.LeakyReLU,
 )
 bnn = base.BNN(nn=nn)
-device = torch.device("cuda")
-bnn = bnn.to(device)
 
 # Define a prior (this one applies to all parameters in the model).
+# prior = priors.SpikeSlab(
+#     loc=torch.tensor([0.0, 0.0]),
+#     scale=torch.tensor([1.0, 1.0]),
+#     probs=torch.tensor([0.5, 0.5]),
+# )
 prior = priors.SpikeSlab(
-    loc=torch.tensor([0.0, 0.0], device=device),
-    scale=torch.tensor([0.01, 5.0], device=device),
-    probs=torch.tensor([0.5, 0.5], device=device),
+    loc=torch.tensor([0.0, 0.0]),
+    scale=torch.tensor([0.01, 5.0]),
+    probs=torch.tensor([0.5, 0.5]),
 )
 
 # Define a dataset.
@@ -54,7 +58,9 @@ batch_size = 128
 dataset = generic.SimulatedData(
     data_generator=data_generator, dataset_length=n_data, transform=noise_tform
 )
-dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
+dataloader = torch.utils.data.DataLoader(
+    dataset=dataset, batch_size=batch_size, shuffle=True
+)
 
 # Define optimizer and loss.
 n_batches = n_data // batch_size
@@ -63,37 +69,19 @@ loss_fn = losses.ELBO(
     kl_divergence=losses.KLDivergence(prior=prior),
     beta=1.0 / n_batches,  # see Graves 2011
 )
-n_epochs = 100
 optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-3)
 
+# Prepare a Lightning module.
+bnn_lightning = base.BNNLightning(bnn=bnn, loss=loss_fn)
+
 # Train.
-loss_train = []
-best_model_state_dict = copy.deepcopy(bnn.state_dict())
-best_loss = torch.inf
-for epoch in range(n_epochs):
-    for batch in dataloader:
-        # Forward pass through model.
-        optimizer.zero_grad()
-        out = bnn(batch["input"]["x"].to(device))
-
-        # Compute loss.
-        loss = loss_fn(
-            model=bnn, input=out[0], target=batch["output"].to(device), var=out[1]
-        )
-
-        # Update model.
-        loss.backward()
-        optimizer.step()
-
-    print(f"epoch {epoch+1} of {n_epochs}: loss = {loss}")
-    loss_train.append(loss.detach().cpu())
-    if loss.item() < best_loss:
-        best_loss = loss.item()
-        best_model_state_dict = copy.deepcopy(bnn.state_dict())
+n_epochs = 100
+trainer = L.Trainer(max_epochs=n_epochs, check_val_every_n_epoch=n_epochs)
+trainer.fit(
+    model=bnn_lightning, train_dataloaders=dataloader, val_dataloaders=dataloader
+)
 
 # Plot some examples.
-final_model_state_dict = copy.deepcopy(bnn.state_dict())
-bnn.load_state_dict(best_model_state_dict)
 input = []
 output = []
 n_examples = 1000

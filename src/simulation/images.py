@@ -33,7 +33,7 @@ def gaussian_blobs(
     # Compute output image.
     y = np.arange(im_size[0]) - im_size[0] / 2 + 0.5
     x = np.arange(im_size[1]) - im_size[1] / 2 + 0.5
-    out = np.zeros(im_size)
+    out = np.zeros((1, *im_size), dtype=np.float32)
     for n in range(len(mu)):
         out += (
             2.0

@@ -21,7 +21,7 @@ class MLP(torch.nn.Module):
         ]
         if activation is not None:
             modules.append(activation())
-        for _ in range(n_hidden_layers - 2):
+        for _ in range(n_hidden_layers):
             modules.append(
                 torch.nn.Linear(
                     in_features=hidden_features, out_features=hidden_features

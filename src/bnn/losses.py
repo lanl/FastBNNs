@@ -6,6 +6,8 @@ import torch
 import torch.distributions as dist
 from torch.nn.modules.loss import _Loss
 
+from bnn import priors
+
 
 def kl_divergence_sampled(
     dist0: dist.Distribution, dist1: dist.Distribution, n_samples: int = 1
@@ -22,7 +24,7 @@ def kl_divergence_sampled(
 class KLDivergence(_Loss):
     """KL divergence loss for Bayesian neural networks."""
 
-    def __init__(self, prior: Union[dict, dist.Distribution] = None):
+    def __init__(self, prior: Union[dict, priors.Distribution] = None):
         """Initialize KL divergence loss.
         Args:
             prior: Prior distribution over parameters.  This can be a single

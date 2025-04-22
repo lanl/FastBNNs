@@ -4,6 +4,8 @@ from collections.abc import Callable
 
 import torch
 
+from simulation import generators, polynomials, observation
+
 
 class SimulatedData(torch.utils.data.Dataset):
     """Dataset for stochastic simulators with fixed input arguments."""
@@ -31,8 +33,6 @@ class SimulatedData(torch.utils.data.Dataset):
 
     def __getitem__(self, idx: int):
         data_dict = self.data_generator()
-        data_dict["input"]["x"] = data_dict["input"]["x"].float()
-        data_dict["output"] = data_dict["output"].float()
         if self.transform is not None:
             data_dict["output"] = self.transform(data_dict["output"])
 

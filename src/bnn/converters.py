@@ -1,15 +1,120 @@
 """Collections of Bayesian neural network layers."""
 
 import copy
+import re
+import sys
 from typing import Union
 
 import numpy as np
 import torch
 import torch.distributions as dist
 
+import bnn.inference
 from bnn.inference import MomentPropagator, MonteCarlo, UnscentedTransform
 from bnn.losses import kl_divergence_sampled
+from bnn.priors import Distribution
 from utils.misc import get_torch_functional
+
+
+# List out torch.nn modules known to be compatible with BayesianLayer.  Other
+# layers will default to using BayesianLayerSafe.
+BAYESIAN_LAYER_COMPATIBLE = [
+    "Linear",
+    "ReLU",
+    "LeakyReLU",
+    "AvgPool1d",
+    "AvgPool2d",
+    "AvgPool3d",
+    "MaxPool1d",
+    "MaxPool2d",
+    "MaxPool3d",
+]
+COMPATIBLE_FUNCTIONALS = {
+    "Linear": "linear",
+    "ReLU": "relu",
+    "LeakyReLU": "leaky_relu",
+}  # {name of torch.nn module: name of corresponding torch.nn.functional}
+
+current_module = sys.modules[__name__]
+
+
+def convert_to_bnn_(
+    model: torch.nn.Module,
+    converter_kwargs: dict = {},
+    converter_kwargs_global: dict = {},
+    named_modules_to_convert: list = None,
+) -> None:
+    """Convert layers of `model` to Bayesian counterparts.
+
+    Args:
+        model: Model to be converted to Bayesian counterpart.
+        converter_kwargs: Additional keyword arguments passed to
+            initialization of named Bayesian layers.  For example, if `model`
+            has a module named "module1", we'll convert "module1" as
+            Converter(module1, **converter_kwargs["module1]) where
+            Converter is a module converter.
+        converter_kwargs_global: Keyword arguments that we'll merge
+            with values of bayesian_module_kwargs as, e.g.,
+            Converter(module1, **(converter_kwargs_global | converter_kwargs["module1]))
+        named_modules_to_convert: List of named modules that we wish to
+            convert to Bayesian modules (i.e., modules whose learnable parameters
+            we wish to treat as distributions).
+    """
+    # Search for modules of `model` to convert, removing stem modules from the
+    # list (we just want the leaf modules that contain parameters).
+    if named_modules_to_convert is None:
+        modules = [m for m in model.named_modules()]
+    else:
+        modules = named_modules_to_convert
+    leaf_names = []
+    for module in modules[::-1]:
+        # If other modules are a prefix of this modules name, we'll assume they
+        # are this modules parent (hence not a leaf module).
+        children = []
+        for leaf in leaf_names:
+            matches = re.match(f"{module[0]}.*", leaf)
+            if matches is not None:
+                children.append(matches)
+        if len(children) == 0:
+            leaf_names.append(module[0])
+
+    # Replace leaf modules with Bayesian counterparts or compatible passthroughs.
+    for leaf in leaf_names:
+        module = model.get_submodule(leaf)
+        module_name = module.__class__.__name__
+
+        # Search for an appropriate module converter in order: custom converters
+        # for this named module, BayesianLayer for modules listed in
+        # BAYESIAN_LAYER_COMPATIBLE (NOTE: this list was manually defined and many
+        # modules in torch.nn that are compatible with BayesianLayer haven't been
+        # added)., or finally using the BayesianLayerSafe converter which should
+        # work for most modules but may be less efficient than custom or
+        # BayesianLayer conversions.
+        module_kwargs = converter_kwargs_global | converter_kwargs.pop(module_name, {})
+        if hasattr(current_module, module_name):
+            # If a custom layer exists for this named layer, we'll use that by default.
+            custom_layer = getattr(current_module, module_name)(
+                module=module, **module_kwargs
+            )
+            model.set_submodule(leaf, custom_layer)
+        elif module.__class__.__name__ in BAYESIAN_LAYER_COMPATIBLE:
+            # Search for a good default moment propagator.
+            kwarg_overrides = {}
+            if "moment_propagator" not in module_kwargs.keys():
+                if hasattr(bnn.inference, module_name):
+                    propagator = getattr(bnn.inference, module_name)
+                    kwarg_overrides["moment_propagator"] = propagator()
+
+            # Create Bayesian version of this layer.
+            bayesian_layer = BayesianLayer(
+                module=module, **(module_kwargs | kwarg_overrides)
+            )
+            model.set_submodule(leaf, bayesian_layer)
+        else:
+            # Use the "safe" converter which is expected to work for more
+            # modules than `BayesianLayer`.
+            bayesian_layer = BayesianLayerSafe(module=module, **module_kwargs)
+            model.set_submodule(leaf, bayesian_layer)
 
 
 class Converter(torch.nn.Module):
@@ -41,7 +146,7 @@ class Converter(torch.nn.Module):
                 param.data = self.samplers_init[key].sample(sample_shape=param.shape)
 
     def compute_kl_divergence(
-        self, priors: Union[dict, dist.Distribution] = None, n_samples: int = 1
+        self, priors: Union[dict, Distribution] = None, n_samples: int = 1
     ) -> torch.tensor:
         """Compute the KL divergence between self.prior and module parameters.
 
@@ -81,7 +186,7 @@ class Converter(torch.nn.Module):
                                 self._module_params[param_name + "_rho"]
                             ),
                         ),
-                        param_prior,
+                        param_prior.distribution,
                     ).sum()
                 )
             except NotImplementedError:
@@ -94,7 +199,7 @@ class Converter(torch.nn.Module):
                                 self._module_params[param_name + "_rho"]
                             ),
                         ),
-                        dist1=param_prior,
+                        dist1=param_prior.distribution,
                         n_samples=n_samples,
                     ).sum()
                 )
@@ -172,15 +277,21 @@ class BayesianLayer(Converter):
         # parameter list).
         _module_params = torch.nn.ParameterDict()
         for param in module.named_parameters():
-            _module_params[param[0] + "_mean"] = torch.empty(
-                param[1].shape,
-                device=param[1].device,
-                dtype=param[1].dtype,
+            _module_params[param[0] + "_mean"] = torch.nn.Parameter(
+                torch.empty(
+                    param[1].shape,
+                    device=param[1].device,
+                    dtype=param[1].dtype,
+                ),
+                requires_grad=param[1].requires_grad,
             )
-            _module_params[param[0] + "_rho"] = torch.empty(
-                param[1].shape,
-                device=param[1].device,
-                dtype=param[1].dtype,
+            _module_params[param[0] + "_rho"] = torch.nn.Parameter(
+                torch.empty(
+                    param[1].shape,
+                    device=param[1].device,
+                    dtype=param[1].dtype,
+                ),
+                requires_grad=param[1].requires_grad,
             )
         self._module_params = _module_params
 
@@ -204,13 +315,13 @@ class BayesianLayer(Converter):
             for key, val in _module_params.items():
                 if "_mean" in key:
                     samplers_init[key] = dist.Uniform(
-                        low=-np.sqrt(val.shape[-1]),
-                        high=np.sqrt(val.shape[-1]),
+                        low=-1.0 / np.sqrt(val.shape[-1]),
+                        high=1.0 / np.sqrt(val.shape[-1]),
                     )
                 else:
                     samplers_init[key] = dist.Uniform(
                         low=-8.0,
-                        high=-5.0,
+                        high=-2.0,
                     )
         self.samplers_init = samplers_init
         self.reset_parameters()
@@ -317,6 +428,7 @@ class BayesianLayerSafe(Converter):
                 _module_params[key + "_mean"] = getattr(mu, key)
                 _module_params[key + "_rho"] = getattr(rho, key)
         else:
+            rho = None
             for key, _ in module_params:
                 _module_params[key + "_mean"] = getattr(mu, key)
                 _module_params[key + "_rho"] = None
@@ -324,12 +436,9 @@ class BayesianLayerSafe(Converter):
         self.rho = rho
         self._module_params = _module_params
 
-        # Create a copy of input `module` that we'll use for stochastic forward
-        # passes through this layer.
-        if rho is None:
-            self._module = None
-        else:
-            self._module = copy.deepcopy(module)
+        # Prepare a module copy for sampling (we'll actually initialize this
+        # on first use so that we don't waste memory if it's never needed).
+        self._module = None
 
         # Validate and set moment propagator.
         self.propagate_moments = propagate_moments
@@ -363,7 +472,7 @@ class BayesianLayerSafe(Converter):
                 else:
                     samplers_init[key] = dist.Uniform(
                         low=-8.0,
-                        high=-5.0,
+                        high=-2.0,
                     )
         self.samplers_init = samplers_init
         self.reset_parameters()
@@ -390,6 +499,8 @@ class BayesianLayerSafe(Converter):
             return self.mu
         else:
             # In this case, we want to resample parameters of self._module.
+            if self._module is None:
+                self._module = copy.deepcopy(self.mu)
             params = {key: val for key, val in self._module.named_parameters()}
             params_sampled = self.module_params
             for param_name, param in params.items():

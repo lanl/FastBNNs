@@ -37,10 +37,10 @@ def select_default_sigmas(
     n = (n_sigma_points - 1) // 2
     n_vec = torch.arange(1, 1 + n, device=mu.device)
     sigma_points[1 : 1 + n] = mu + torch.sqrt(
-        torch.einsum("ij,jkl->ikl", n_vec[:, None] + kappa, var[None, ...])
+        torch.einsum("ij,j...->i...", n_vec[:, None] + kappa, var[None, ...])
     )
     sigma_points[1 + n :] = mu - torch.sqrt(
-        torch.einsum("ij,jkl->ikl", n_vec[:, None] + kappa, var[None, ...])
+        torch.einsum("ij,j...->i...", n_vec[:, None] + kappa, var[None, ...])
     )
 
     # Compute corresponding weights.
