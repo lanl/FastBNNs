@@ -1,6 +1,5 @@
 """Bayesian neural network base module(s) and utilities."""
 
-from collections.abc import Callable
 from typing import Any, Iterator
 
 import lightning as L
@@ -79,11 +78,6 @@ class BNNLightning(L.LightningModule):
         out = self.bnn(batch["input"]["x"])
 
         # Compute loss.
-        import numpy as np
-
-        self.loss.beta = (
-            np.exp(-10.0 * self.current_epoch / 100.0) / batch["input"]["x"].shape[0]
-        )
         loss = self.loss(
             model=self.bnn, input=out[0], target=batch["output"], var=out[1]
         )

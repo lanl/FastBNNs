@@ -31,10 +31,8 @@ device = torch.device("cuda")
 bnn = bnn.to(device)
 
 # Define a prior (this one applies to all parameters in the model).
-prior = priors.SpikeSlab(
-    loc=torch.tensor([0.0, 0.0], device=device),
-    scale=torch.tensor([0.01, 5.0], device=device),
-    probs=torch.tensor([0.5, 0.5], device=device),
+prior = priors.Distribution(
+    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
 )
 
 # Define a dataset.

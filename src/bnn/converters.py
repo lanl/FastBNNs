@@ -29,11 +29,6 @@ BAYESIAN_LAYER_COMPATIBLE = [
     "MaxPool2d",
     "MaxPool3d",
 ]
-COMPATIBLE_FUNCTIONALS = {
-    "Linear": "linear",
-    "ReLU": "relu",
-    "LeakyReLU": "leaky_relu",
-}  # {name of torch.nn module: name of corresponding torch.nn.functional}
 
 current_module = sys.modules[__name__]
 

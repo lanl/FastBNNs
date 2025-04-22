@@ -30,15 +30,8 @@ nn = mlp.MLP(
 bnn = base.BNN(nn=nn)
 
 # Define a prior (this one applies to all parameters in the model).
-# prior = priors.SpikeSlab(
-#     loc=torch.tensor([0.0, 0.0]),
-#     scale=torch.tensor([1.0, 1.0]),
-#     probs=torch.tensor([0.5, 0.5]),
-# )
-prior = priors.SpikeSlab(
-    loc=torch.tensor([0.0, 0.0]),
-    scale=torch.tensor([0.01, 5.0]),
-    probs=torch.tensor([0.5, 0.5]),
+prior = priors.Distribution(
+    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
 )
 
 # Define a dataset.
@@ -69,7 +62,6 @@ loss_fn = losses.ELBO(
     kl_divergence=losses.KLDivergence(prior=prior),
     beta=1.0 / n_batches,  # see Graves 2011
 )
-optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-3)
 
 # Prepare a Lightning module.
 bnn_lightning = base.BNNLightning(bnn=bnn, loss=loss_fn)
