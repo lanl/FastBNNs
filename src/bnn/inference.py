@@ -112,14 +112,9 @@ class UnscentedTransform(MomentPropagator):
         if isinstance(input_mu, tuple):
             input_mu, input_var = input_mu
 
-        # Temporarily turn off moment propagation in module to avoid recursion.
-        if hasattr(module, "propagate_moments"):
-            propagate_moments_init = module.propagate_moments
-            module.propagate_moments = False
-
         # Propagate through module.
         if input_var is None:
-            mu = module(input_mu)[0]
+            mu = module(input_mu)
             var = None
             samples = None
         else:
@@ -127,14 +122,9 @@ class UnscentedTransform(MomentPropagator):
             sigma_points, weights = self.sigma_selector(mu=input_mu, var=input_var)
 
             # Propagate mean and variance.
-            samples = torch.stack([module(s)[0] for s in sigma_points])
+            samples = torch.stack([module(s) for s in sigma_points])
             mu = torch.einsum("i,i...->...", weights, samples)
             var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
-
-        # Restore initial setting of `propagate_moments` (this may always be
-        # be True but using initial state to account for custom use cases).
-        if hasattr(module, "propagate_moments"):
-            module.propagate_moments = propagate_moments_init
 
         if return_samples:
             return mu, var, samples
@@ -181,25 +171,15 @@ class MonteCarlo(MomentPropagator):
         if isinstance(input_mu, tuple):
             input_mu, input_var = input_mu
 
-        # Temporarily turn off moment propagation in module to avoid recursion.
-        if hasattr(module, "propagate_moments"):
-            propagate_moments_init = module.propagate_moments
-            module.propagate_moments = False
-
         # Compute forward passes.
         if input_var is None:
-            samples = torch.stack([module(input_mu)[0] for _ in range(self.n_samples)])
+            samples = torch.stack([module(input_mu) for _ in range(self.n_samples)])
         else:
             # If input_var is provided, we also need to sample the input distribution.
             input_dist = self.input_sampler(loc=input_mu, scale=input_var.sqrt())
             samples = torch.stack(
-                [module(input_dist.sample())[0] for _ in range(self.n_samples)]
+                [module(input_dist.sample()) for _ in range(self.n_samples)]
             )
-
-        # Restore initial setting of `propagate_moments` (this may always be
-        # be True but using initial state to account for custom use cases).
-        if hasattr(module, "propagate_moments"):
-            module.propagate_moments = propagate_moments_init
 
         if return_samples:
             return samples.mean(dim=0), samples.var(dim=0), samples
@@ -235,6 +215,7 @@ class Linear(MomentPropagator):
             )
         else:
             bias_params = (None, None)
+
         mu = module.functional(
             input=input_mu,
             weight=module._module_params["weight_mean"],
@@ -260,42 +241,6 @@ class Linear(MomentPropagator):
             )
 
         return mu, var
-
-
-class Conv1d(Linear):
-    """Deterministic moment propagation of mean and variance through a Conv1d layer.
-
-    Conv2d acts the same as Linear w.r.t. inputs.  We create this named class so
-    that external workflows can search for and use a "Conv1d" class.
-    """
-
-    def __init__(self, *args, **kwargs):
-        """Initializer for Conv1d inference module."""
-        super().__init__(*args, **kwargs)
-
-
-class Conv2d(Linear):
-    """Deterministic moment propagation of mean and variance through a Conv2d layer.
-
-    Conv2d acts the same as Linear w.r.t. inputs.  We create this named class so
-    that external workflows can search for and use a "Conv2d" class.
-    """
-
-    def __init__(self, *args, **kwargs):
-        """Initializer for Conv2d inference module."""
-        super().__init__(*args, **kwargs)
-
-
-class Conv3d(Linear):
-    """Deterministic moment propagation of mean and variance through a Conv3d layer.
-
-    Conv3d acts the same as Linear w.r.t. inputs.  We create this named class so
-    that external workflows can search for and use a "Conv3d" class.
-    """
-
-    def __init__(self, *args, **kwargs):
-        """Initializer for Conv3d inference module."""
-        super().__init__(*args, **kwargs)
 
 
 if __name__ == "__main__":

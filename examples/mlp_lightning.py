@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from bnn import base, losses, priors
+from bnn import base, losses, priors, types
 from datasets import generic
 from models import mlp
 from simulation import generators, polynomials, observation
@@ -81,7 +81,7 @@ for n in range(n_examples):
     data = dataset[n]
     input.append(data["input"]["x"])
 input = torch.stack(input, dim=0)
-output = bnn(input)
+output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
 y = output[0].detach().cpu().squeeze()[sort_inds]

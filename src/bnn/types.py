@@ -22,8 +22,13 @@ class MuVar:
                 without unpacking arguments).
         """
         if isinstance(mu, tuple):
+            # Mean and variance passed as a tuple
             self.mu_var = mu
+        elif var is None:
+            # Only mean was passed, default variance to 0.0.
+            self.mu_var = (mu, torch.zeros_like(mu))
         else:
+            # Mu and var passed individually.
             self.mu_var = (mu, var)
 
     def __repr__(self):
@@ -90,10 +95,12 @@ class MuVar:
     def __pow__(self, input: int) -> MuVar:
         """Custom exponentiation functionality for MuVar types."""
         if isinstance(input, int):
-            out = self
-            for _ in range(input - 1):
-                out *= self
-            return out
+            # Extended from __mul__ for integer `input`.
+            return MuVar(
+                self.mu_var[0] ** input,
+                (self.mu_var[0] ** 2 + self.mu_var[1]) ** input
+                - self.mu_var[0] ** (2 * input),
+            )
         else:
             raise NotImplementedError
 

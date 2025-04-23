@@ -5,7 +5,8 @@ from typing import Any, Iterator
 import lightning as L
 import torch
 
-from bnn.converters import convert_to_bnn_
+from bnn.types import MuVar
+from bnn.wrappers import convert_to_bnn_
 
 
 class BNN(torch.nn.Module):
@@ -75,7 +76,7 @@ class BNNLightning(L.LightningModule):
     def training_step(self, batch, batch_idx):
         """Training step for a single batch."""
         # Compute forward pass through model.
-        out = self.bnn(batch["input"]["x"])
+        out = self.bnn(MuVar(batch["input"]["x"]))
 
         # Compute loss.
         loss = self.loss(
@@ -90,7 +91,7 @@ class BNNLightning(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         """Validation step for a single batch."""
         # Compute forward pass through model.
-        out = self.bnn(batch["input"]["x"])
+        out = self.bnn(MuVar(batch["input"]["x"]))
 
         # Compute loss.
         loss = self.loss(
