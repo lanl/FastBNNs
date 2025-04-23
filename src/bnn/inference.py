@@ -13,6 +13,8 @@ from typing import Union
 import torch
 import torch.distributions as dist
 
+from bnn.types import MuVar
+
 
 def select_default_sigmas(
     mu: torch.tensor, var: torch.tensor, n_sigma_points: int = 3, kappa: int = 2
@@ -102,34 +104,22 @@ class UnscentedTransform(MomentPropagator):
     def forward(
         self,
         module: torch.nn.Module,
-        input_mu: Union[tuple, torch.tensor],
-        input_var: torch.tensor = None,
+        input: MuVar,
         return_samples: bool = False,
-    ) -> tuple[torch.tensor, torch.tensor]:
+    ) -> Union[MuVar, tuple]:
         """Propagate moments using the unscented transform."""
-        # Repackage `input_mu` if passed as a tuple (this allows the input mean
-        # and variance to be passed as forward(x) where x = (mu, var)).
-        if isinstance(input_mu, tuple):
-            input_mu, input_var = input_mu
+        # Select sigma points.
+        sigma_points, weights = self.sigma_selector(mu=input[0], var=input[1])
 
-        # Propagate through module.
-        if input_var is None:
-            mu = module(input_mu)
-            var = None
-            samples = None
-        else:
-            # Select sigma points.
-            sigma_points, weights = self.sigma_selector(mu=input_mu, var=input_var)
-
-            # Propagate mean and variance.
-            samples = torch.stack([module(s) for s in sigma_points])
-            mu = torch.einsum("i,i...->...", weights, samples)
-            var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
+        # Propagate mean and variance.
+        samples = torch.stack([module(s) for s in sigma_points])
+        mu = torch.einsum("i,i...->...", weights, samples)
+        var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
 
         if return_samples:
-            return mu, var, samples
+            return MuVar(mu, var), samples
         else:
-            return mu, var
+            return MuVar(mu, var)
 
 
 class MonteCarlo(MomentPropagator):
@@ -161,30 +151,20 @@ class MonteCarlo(MomentPropagator):
     def forward(
         self,
         module: torch.nn.Module,
-        input_mu: Union[tuple, torch.tensor],
-        input_var: torch.tensor = None,
+        input: MuVar,
         return_samples: bool = False,
-    ) -> tuple[torch.tensor, torch.tensor]:
+    ) -> Union[MuVar, tuple]:
         """Propagate moments by averaging over n_samples forward passes of module."""
-        # Repackage `input_mu` if passed as a tuple (this allows the input mean
-        # and variance to be passed as forward(x) where x = (mu, var)).
-        if isinstance(input_mu, tuple):
-            input_mu, input_var = input_mu
-
-        # Compute forward passes.
-        if input_var is None:
-            samples = torch.stack([module(input_mu) for _ in range(self.n_samples)])
-        else:
-            # If input_var is provided, we also need to sample the input distribution.
-            input_dist = self.input_sampler(loc=input_mu, scale=input_var.sqrt())
-            samples = torch.stack(
-                [module(input_dist.sample()) for _ in range(self.n_samples)]
-            )
+        # If input_var is provided, we also need to sample the input distribution.
+        input_dist = self.input_sampler(loc=input[0], scale=input[1].sqrt())
+        samples = torch.stack(
+            [module(input_dist.sample()) for _ in range(self.n_samples)]
+        )
 
         if return_samples:
-            return samples.mean(dim=0), samples.var(dim=0), samples
+            return MuVar(samples.mean(dim=0), samples.var(dim=0)), samples
         else:
-            return samples.mean(dim=0), samples.var(dim=0)
+            return MuVar(samples.mean(dim=0), samples.var(dim=0))
 
 
 class Linear(MomentPropagator):
@@ -197,15 +177,9 @@ class Linear(MomentPropagator):
     def forward(
         self,
         module: torch.nn.Module,
-        input_mu: Union[tuple, torch.tensor],
-        input_var: torch.tensor = None,
-    ) -> tuple[torch.tensor, torch.tensor]:
+        input: MuVar,
+    ) -> MuVar:
         """Analytical moment propagation through layer."""
-        # Repackage `input_mu` if passed as a tuple (this allows the input mean
-        # and variance to be passed as forward(x) where x = (mu, var)).
-        if isinstance(input_mu, tuple):
-            input_mu, input_var = input_mu
-
         # Compute analytical result under mean-field approximation following
         # https://doi.org/10.48550/arXiv.2402.14532
         if "bias_mean" in module._module_params.keys():
@@ -217,12 +191,12 @@ class Linear(MomentPropagator):
             bias_params = (None, None)
 
         mu = module.functional(
-            input=input_mu,
+            input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
         )
         var = module.functional(
-            input=input_mu**2,
+            input=input[0] ** 2,
             weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
             bias=(
                 None
@@ -232,15 +206,14 @@ class Linear(MomentPropagator):
         )
 
         # Add input variance contribution.
-        if input_var is not None:
-            var += module.functional(
-                input=input_var,
-                weight=module._module_params["weight_mean"] ** 2
-                + module.scale_tform(module._module_params["weight_rho"]) ** 2,
-                bias=None,
-            )
+        var += module.functional(
+            input=input[1],
+            weight=module._module_params["weight_mean"] ** 2
+            + module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            bias=None,
+        )
 
-        return mu, var
+        return MuVar(mu, var)
 
 
 if __name__ == "__main__":
