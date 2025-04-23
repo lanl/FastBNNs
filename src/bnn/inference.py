@@ -8,7 +8,7 @@ for that layer if available.
 
 from collections.abc import Callable
 import functools
-from typing import Union
+from typing import List, Optional, Union
 
 import torch
 import torch.distributions as dist
@@ -177,6 +177,7 @@ class Linear(MomentPropagator):
     def __init__(self):
         """Initializer for Linear inference module"""
         super().__init__()
+        self.functional = torch.nn.functional.linear
 
     def forward(
         self,
@@ -194,12 +195,12 @@ class Linear(MomentPropagator):
         else:
             bias_params = (None, None)
 
-        mu = torch.nn.functional.linear(
+        mu = self.functional(
             input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
         )
-        var = torch.nn.functional.linear(
+        var = self.functional(
             input=input[0] ** 2,
             weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
             bias=(
@@ -210,7 +211,7 @@ class Linear(MomentPropagator):
         )
 
         # Add input variance contribution.
-        var += torch.nn.functional.linear(
+        var += self.functional(
             input=input[1],
             weight=module._module_params["weight_mean"] ** 2
             + module.scale_tform(module._module_params["weight_rho"]) ** 2,
@@ -233,14 +234,27 @@ class ConvNd(MomentPropagator):
         input: MuVar,
     ) -> MuVar:
         """Analytical moment propagation through layer."""
-        # Prepare functional.
-        functional_kwargs = {
-            "stride": module.mu.stride,
-            "padding": module.mu.padding,
-            "dilation": module.mu.dilation,
-            "groups": module.mu.groups,
-        }
-        functional = getattr(torch.nn.functional, f"conv{module.__name__[4]}d")
+        # Modify input and prepare functional arguments.
+        if module.mu.padding_mode != "zeros":
+            # This is added to mimic torch.nn.modules.conv _conv_forward methods.
+            input = torch.nn.functional.pad(
+                input,
+                module.mu._reversed_padding_repeated_twice,
+                mode=module.mu.padding_mode,
+            )
+            functional_kwargs = {
+                "stride": module.mu.stride,
+                "padding": torch.nn.modules.utils._triple(0),
+                "dilation": module.mu.dilation,
+                "groups": module.mu.groups,
+            }
+        else:
+            functional_kwargs = {
+                "stride": module.mu.stride,
+                "padding": module.mu.padding,
+                "dilation": module.mu.dilation,
+                "groups": module.mu.groups,
+            }
 
         # Compute analytical result under mean-field approximation following
         # https://doi.org/10.48550/arXiv.2402.14532
@@ -252,13 +266,13 @@ class ConvNd(MomentPropagator):
         else:
             bias_params = (None, None)
 
-        mu = functional(
+        mu = self.functional(
             input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
             **functional_kwargs,
         )
-        var = functional(
+        var = self.functional(
             input=input[0] ** 2,
             weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
             bias=(
@@ -270,7 +284,7 @@ class ConvNd(MomentPropagator):
         )
 
         # Add input variance contribution.
-        var += functional(
+        var += self.functional(
             input=input[1],
             weight=module._module_params["weight_mean"] ** 2
             + module.scale_tform(module._module_params["weight_rho"]) ** 2,
@@ -291,6 +305,7 @@ class Conv1d(ConvNd):
     def __init__(self):
         """Initializer for Conv1d inference module"""
         super().__init__()
+        self.functional = torch.nn.functional.conv1d
 
 
 class Conv2d(ConvNd):
@@ -303,6 +318,7 @@ class Conv2d(ConvNd):
     def __init__(self):
         """Initializer for Conv2d inference module"""
         super().__init__()
+        self.functional = torch.nn.functional.conv2d
 
 
 class Conv3d(ConvNd):
@@ -315,6 +331,108 @@ class Conv3d(ConvNd):
     def __init__(self):
         """Initializer for Conv3d inference module"""
         super().__init__()
+        self.functional = torch.nn.functional.conv3d
+
+
+class ConvTransposeNd(MomentPropagator):
+    """Deterministic moment propagation of mean and variance through a ConvTransposeNd layer."""
+
+    def __init__(self):
+        """Initializer for ConvTransposeNd inference module"""
+        super().__init__()
+
+    def forward(
+        self,
+        module: torch.nn.Module,
+        input: MuVar,
+        output_size: Optional[List[int]] = None,
+    ) -> MuVar:
+        """Analytical moment propagation through layer."""
+        # Prepare functional arguments.
+        output_padding = module.mu._output_padding(
+            input,
+            output_size,
+            module.mu.stride,
+            module.mu.padding,
+            module.mu.kernel_size,
+            self.num_spatial_dims,
+            module.mu.dilation,
+        )
+        functional_kwargs = {
+            "stride": module.mu.stride,
+            "padding": module.mu.padding,
+            "dilation": module.mu.dilation,
+            "groups": module.mu.groups,
+            "output_padding": output_padding,
+        }
+
+        # Compute analytical result under mean-field approximation following
+        # https://doi.org/10.48550/arXiv.2402.14532
+        if "bias_mean" in module._module_params.keys():
+            bias_params = (
+                module._module_params["bias_mean"],
+                module._module_params["bias_rho"],
+            )
+        else:
+            bias_params = (None, None)
+
+        mu = self.functional(
+            input=input[0],
+            weight=module._module_params["weight_mean"],
+            bias=bias_params[0],
+            **functional_kwargs,
+        )
+        var = self.functional(
+            input=input[0] ** 2,
+            weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            bias=(
+                None
+                if bias_params[1] is None
+                else module.scale_tform(bias_params[1]) ** 2
+            ),
+            **functional_kwargs,
+        )
+
+        # Add input variance contribution.
+        var += self.functional(
+            input=input[1],
+            weight=module._module_params["weight_mean"] ** 2
+            + module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            bias=None,
+            **functional_kwargs,
+        )
+
+        return MuVar(mu, var)
+
+
+class ConvTranspose1d(ConvTransposeNd):
+    """Deterministic moment propagation of mean and variance through a ConvTranspose1d layer."""
+
+    def __init__(self):
+        """Initializer for ConvTranspose1d inference module"""
+        super().__init__()
+        self.functional = torch.nn.functional.conv_transpose1d
+        self.num_spatial_dims = 1
+
+
+class ConvTranspose2d(ConvTransposeNd):
+    """Deterministic moment propagation of mean and variance through a ConvTranspose2d layer."""
+
+    def __init__(self):
+        """Initializer for ConvTranspose2d inference module"""
+        super().__init__()
+        self.functional = torch.nn.functional.conv_transpose2d
+        self.num_spatial_dims = 2
+
+
+class ConvTranspose3d(ConvTransposeNd):
+    """Deterministic moment propagation of mean and variance through a ConvTranspose3d layer."""
+
+    def __init__(self):
+        """Initializer for ConvTranspose3d inference module"""
+        super().__init__()
+        self.functional = torch.nn.functional.conv_transpose3d
+        self.num_spatial_dims = 3
 
 
 if __name__ == "__main__":
@@ -329,35 +447,35 @@ if __name__ == "__main__":
     ut = UnscentedTransform()
 
     # Propagate example data through layer.
-    input_mu = torch.tensor([1.23])[None, :]
-    input_var = torch.tensor([3.21])[None, :]
-    out_mc = mc(
-        module=layer, input_mu=input_mu, input_var=input_var, return_samples=True
-    )
-    out_ut = ut(
-        module=layer, input_mu=input_mu, input_var=input_var, return_samples=True
-    )
+    input = MuVar(torch.tensor([1.23])[None, :], torch.tensor([3.21])[None, :])
+    out_mc, samples_mc = mc(module=layer, input=input, return_samples=True)
+    out_ut, samples_ut = ut(module=layer, input=input, return_samples=True)
 
     # Plot results.
     x = torch.linspace(
-        (input_mu - 3.0 * torch.sqrt(input_var)).squeeze(),
-        (input_mu + 3.0 * torch.sqrt(input_var)).squeeze(),
+        (input[0] - 3.0 * torch.sqrt(input[1])).squeeze(),
+        (input[0] + 3.0 * torch.sqrt(input[1])).squeeze(),
         1000,
     )
     fig, ax = plt.subplots()
-    ax.hist(out_mc[2], density=True, label="Monte Carlo samples")
+    ax.hist(samples_mc.squeeze(), density=True, label="Monte Carlo samples")
     ax.plot(
         x,
-        torch.distributions.Normal(loc=out_mc[0], scale=out_mc[1].sqrt())
+        torch.distributions.Normal(
+            loc=out_mc[0].squeeze(), scale=out_mc[1].squeeze().sqrt()
+        )
         .log_prob(x)
         .exp(),
         label="Monte Carlo estimated PDF",
     )
     ax.plot(
         x,
-        torch.distributions.Normal(loc=out_ut[0], scale=out_ut[1].sqrt())
+        torch.distributions.Normal(
+            loc=out_ut[0].squeeze(), scale=out_ut[1].squeeze().sqrt()
+        )
         .log_prob(x)
         .exp(),
         label="Unscented transform estimated PDF",
     )
+    plt.legend()
     plt.show()
