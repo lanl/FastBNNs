@@ -63,54 +63,60 @@ def select_default_propagator(module: torch.nn.Module) -> MomentPropagator:
     return moment_propagator
 
 
+def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
+    """Prepare a list of leaf modules of `model`.
+
+    This function filters `module_names` to eliminate the names of parent modules.
+    For example, if we have a model: torch.nn.Module and call [p]
+    """
+    leaf_names = []
+    for module in module_names[::-1]:
+        # If other modules are a prefix of this modules name, we'll assume they
+        # are this modules parent (hence not a leaf module).
+        children = []
+        for leaf in leaf_names:
+            matches = re.match(f"{module}.*", leaf)
+            if matches is not None:
+                children.append(matches)
+        if len(children) == 0:
+            leaf_names.append(module)
+
+    return leaf_names
+
+
 def convert_to_bnn_(
     model: torch.nn.Module,
-    converter_kwargs: dict = {},
-    converter_kwargs_global: dict = {},
-    named_modules_to_convert: list = None,
+    wrapper_kwargs: dict = {},
+    wrapper_kwargs_global: dict = {},
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
     Args:
         model: Model to be converted to Bayesian counterpart.
-        converter_kwargs: Additional keyword arguments passed to
+        wrapper_kwargs: Additional keyword arguments passed to
             initialization of named Bayesian layers.  For example, if `model`
             has a module named "module1", we'll convert "module1" as
-            Converter(module1, **converter_kwargs["module1]) where
+            Converter(module1, **wrapper_kwargs["module1"]) where
             Converter is a module converter.
-        converter_kwargs_global: Keyword arguments that we'll merge
+        wrapper_kwargs_global: Keyword arguments that we'll merge
             with values of bayesian_module_kwargs as, e.g.,
-            Converter(module1, **(converter_kwargs_global | converter_kwargs["module1]))
-        named_modules_to_convert: List of named modules that we wish to
-            convert to Bayesian modules (i.e., modules whose learnable parameters
-            we wish to treat as distributions).
+            Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
     """
     # Search for modules of `model` to convert, removing stem modules from the
     # list (we just want the leaf modules that contain parameters).
-    if named_modules_to_convert is None:
-        modules = [m for m in model.named_modules()]
-    else:
-        modules = named_modules_to_convert
-    leaf_names = []
-    for module in modules[::-1]:
-        # If other modules are a prefix of this modules name, we'll assume they
-        # are this modules parent (hence not a leaf module).
-        children = []
-        for leaf in leaf_names:
-            matches = re.match(f"{module[0]}.*", leaf)
-            if matches is not None:
-                children.append(matches)
-        if len(children) == 0:
-            leaf_names.append(module[0])
+    module_names = [n for n, _ in model.named_modules()]
+    leaf_names = isolate_leaf_module_names(module_names)
 
     # Replace leaf modules with Bayesian counterparts or compatible passthroughs.
     for leaf in leaf_names:
         module = model.get_submodule(leaf)
         module_name = module.__class__.__name__
 
+        # Prepare module arguments.
+        module_kwargs = wrapper_kwargs_global | wrapper_kwargs.pop(leaf, {})
+
         # Search for an appropriate module converter, prioritizing named converters
         # sharing a name with this module if they exist.
-        module_kwargs = converter_kwargs_global | converter_kwargs.pop(module_name, {})
         if hasattr(current_module, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(current_module, module_name)(
@@ -137,6 +143,7 @@ class BayesianModule(torch.nn.Module):
         samplers_init: dict = None,
         priors: dict = None,
         moment_propagator: MomentPropagator = None,
+        learn_var: bool = True,
         *args,
         **kwargs,
     ) -> None:
@@ -170,6 +177,10 @@ class BayesianModule(torch.nn.Module):
                 Keys should match those in `samplers`.
             moment_propagator: Propagation module to propagate mean and variance
                 through this layer.
+            learn_var: Flag indicating learnable parameters should be treated as
+                distributions (with learned variance).  This flag allows us to
+                wrap a layer with this module and its functionality without
+                changing the behavior of its parameters.
         """
         super().__init__(*args, **kwargs)
         self.__name__ = module.__class__.__name__
@@ -179,7 +190,8 @@ class BayesianModule(torch.nn.Module):
         mu = module
         module_params = [p for p in module.named_parameters()]
         _module_params = torch.nn.ParameterDict()
-        if len(module_params) > 0:
+        self.learn_var = learn_var
+        if (len(module_params) > 0) and learn_var:
             # Prepare a copy of `module` to act as the unscaled st. dev. parameters.
             rho = copy.deepcopy(module)
             for key, _ in module_params:

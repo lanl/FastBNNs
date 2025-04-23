@@ -37,7 +37,7 @@ nn = torch.nn.Sequential(
     torch.nn.Flatten(),
     torch.nn.Linear(in_features=np.prod(im_size) * out_channels, out_features=2),
 )
-bnn = base.BNN(nn=nn)
+bnn = base.BNN(nn=nn, convert_in_place=False)
 device = torch.device("cuda")
 bnn = bnn.to(device)
 
@@ -73,7 +73,7 @@ loss_fn = losses.ELBO(
     kl_divergence=losses.KLDivergence(prior=prior),
     beta=1.0 / n_batches,  # see Graves 2011
 )
-n_epochs = 1000
+n_epochs = 300
 optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-3)
 
 # Train.

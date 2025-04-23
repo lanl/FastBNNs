@@ -52,8 +52,10 @@ class KLDivergence(_Loss):
         kl = []
         for module in model.named_modules():
             module_parameters = [p for p in module[1].parameters()]
-            if hasattr(module[1], "compute_kl_divergence") and (
-                len(module_parameters) > 0
+            if (
+                hasattr(module[1], "compute_kl_divergence")
+                and (len(module_parameters) > 0)
+                and module[1].learn_var
             ):
                 if isinstance(self.prior, dict):
                     # Pass the input prior dictionary for this module.

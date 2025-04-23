@@ -85,13 +85,16 @@ class UnscentedTransform(MomentPropagator):
     through a deterministic layer.
     """
 
-    def __init__(self, sigma_selector: Callable = None):
+    def __init__(self, sigma_selector: Callable = None, n_module_samples: int = 1):
         """Initializer for UnscentedTransform inference module.
 
         Args:
             sigma_selector: Callable that accepts input mean and variance and
                 returns the corresponding sigma points and weights used in the
                 unscented transform.
+            n_module_samples: Number of samples to make of the module itself.
+                This allows us to use the unscented transform through modules
+                which themselves are parametrized by random variables.
         """
         super().__init__()
 
@@ -100,6 +103,8 @@ class UnscentedTransform(MomentPropagator):
                 select_default_sigmas, n_sigma_points=3, kappa=2
             )
         self.sigma_selector = sigma_selector
+
+        self.n_module_samples = n_module_samples
 
     def forward(
         self,
@@ -112,9 +117,28 @@ class UnscentedTransform(MomentPropagator):
         sigma_points, weights = self.sigma_selector(mu=input[0], var=input[1])
 
         # Propagate mean and variance.
-        samples = torch.stack([module(s) for s in sigma_points])
-        mu = torch.einsum("i,i...->...", weights, samples)
-        var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
+        if self.n_module_samples > 1:
+            # Perform n_module_samples unscented transforms and combine results.
+            mu_samples = []
+            var_samples = []
+            for s in range(self.n_module_samples):
+                samples = torch.stack([module(s) for s in sigma_points])
+                mu_samples.append(torch.einsum("i,i...->...", weights, samples))
+                var_samples.append(
+                    torch.einsum(
+                        "i,i...->...", weights, (samples - mu_samples[-1]) ** 2
+                    )
+                )
+
+            # Combine estimates from each unscented transform
+            mu = torch.stack(mu_samples).mean(dim=0)
+            var = torch.stack(var_samples).mean(dim=0) + torch.stack(mu_samples).var(
+                dim=0
+            )
+        else:
+            samples = torch.stack([module(s) for s in sigma_points])
+            mu = torch.einsum("i,i...->...", weights, samples)
+            var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
 
         if return_samples:
             return MuVar(mu, var), samples
@@ -185,8 +209,9 @@ class Linear(MomentPropagator):
         input: MuVar,
     ) -> MuVar:
         """Analytical moment propagation through layer."""
-        # Compute analytical result under mean-field approximation following
-        # https://doi.org/10.48550/arXiv.2402.14532
+        ## Compute analytical result under mean-field approximation following
+        ## https://doi.org/10.48550/arXiv.2402.14532
+        # Reorganize parameters.
         if "bias_mean" in module._module_params.keys():
             bias_params = (
                 module._module_params["bias_mean"],
@@ -195,26 +220,30 @@ class Linear(MomentPropagator):
         else:
             bias_params = (None, None)
 
+        # Propagate mean.
         mu = self.functional(
             input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
         )
+
+        # Propagate variance: first term accounts for parameter variance, second
+        # term propagates input variance.
+        if module._module_params["weight_rho"] is None:
+            weight_var = torch.zeros_like(module._module_params["weight_mean"])
+        else:
+            weight_var = module.scale_tform(module._module_params["weight_rho"]) ** 2
         var = self.functional(
             input=input[0] ** 2,
-            weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            weight=weight_var,
             bias=(
                 None
                 if bias_params[1] is None
                 else module.scale_tform(bias_params[1]) ** 2
             ),
-        )
-
-        # Add input variance contribution.
-        var += self.functional(
+        ) + self.functional(
             input=input[1],
-            weight=module._module_params["weight_mean"] ** 2
-            + module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            weight=module._module_params["weight_mean"] ** 2 + weight_var,
             bias=None,
         )
 
@@ -255,9 +284,9 @@ class ConvNd(MomentPropagator):
                 "dilation": module.mu.dilation,
                 "groups": module.mu.groups,
             }
-
-        # Compute analytical result under mean-field approximation following
-        # https://doi.org/10.48550/arXiv.2402.14532
+        ## Compute analytical result under mean-field approximation following
+        ## https://doi.org/10.48550/arXiv.2402.14532
+        # Reorganize parameters.
         if "bias_mean" in module._module_params.keys():
             bias_params = (
                 module._module_params["bias_mean"],
@@ -266,28 +295,32 @@ class ConvNd(MomentPropagator):
         else:
             bias_params = (None, None)
 
+        # Propagate mean.
         mu = self.functional(
             input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
             **functional_kwargs,
         )
+
+        # Propagate variance: first term accounts for parameter variance, second
+        # term propagates input variance.
+        if module._module_params["weight_rho"] is None:
+            weight_var = torch.zeros_like(module._module_params["weight_mean"])
+        else:
+            weight_var = module.scale_tform(module._module_params["weight_rho"]) ** 2
         var = self.functional(
             input=input[0] ** 2,
-            weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            weight=weight_var,
             bias=(
                 None
                 if bias_params[1] is None
                 else module.scale_tform(bias_params[1]) ** 2
             ),
             **functional_kwargs,
-        )
-
-        # Add input variance contribution.
-        var += self.functional(
+        ) + self.functional(
             input=input[1],
-            weight=module._module_params["weight_mean"] ** 2
-            + module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            weight=module._module_params["weight_mean"] ** 2 + weight_var,
             bias=None,
             **functional_kwargs,
         )
@@ -365,9 +398,9 @@ class ConvTransposeNd(MomentPropagator):
             "groups": module.mu.groups,
             "output_padding": output_padding,
         }
-
-        # Compute analytical result under mean-field approximation following
-        # https://doi.org/10.48550/arXiv.2402.14532
+        ## Compute analytical result under mean-field approximation following
+        ## https://doi.org/10.48550/arXiv.2402.14532
+        # Reorganize parameters.
         if "bias_mean" in module._module_params.keys():
             bias_params = (
                 module._module_params["bias_mean"],
@@ -376,28 +409,32 @@ class ConvTransposeNd(MomentPropagator):
         else:
             bias_params = (None, None)
 
+        # Propagate mean.
         mu = self.functional(
             input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
             **functional_kwargs,
         )
+
+        # Propagate variance: first term accounts for parameter variance, second
+        # term propagates input variance.
+        if module._module_params["weight_rho"] is None:
+            weight_var = torch.zeros_like(module._module_params["weight_mean"])
+        else:
+            weight_var = module.scale_tform(module._module_params["weight_rho"]) ** 2
         var = self.functional(
             input=input[0] ** 2,
-            weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            weight=weight_var,
             bias=(
                 None
                 if bias_params[1] is None
                 else module.scale_tform(bias_params[1]) ** 2
             ),
             **functional_kwargs,
-        )
-
-        # Add input variance contribution.
-        var += self.functional(
+        ) + self.functional(
             input=input[1],
-            weight=module._module_params["weight_mean"] ** 2
-            + module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            weight=module._module_params["weight_mean"] ** 2 + weight_var,
             bias=None,
             **functional_kwargs,
         )

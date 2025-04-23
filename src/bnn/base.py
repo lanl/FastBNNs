@@ -1,5 +1,6 @@
 """Bayesian neural network base module(s) and utilities."""
 
+import copy
 from typing import Any, Iterator, Union
 
 import lightning as L
@@ -12,7 +13,9 @@ from bnn.wrappers import convert_to_bnn_
 class BNN(torch.nn.Module):
     """Bayesian neural network base class."""
 
-    def __init__(self, nn: torch.nn.Module, *args, **kwargs):
+    def __init__(
+        self, nn: torch.nn.Module, convert_in_place: bool = True, *args, **kwargs
+    ):
         """Initialize Bayesian neural network.
 
 
@@ -28,12 +31,16 @@ class BNN(torch.nn.Module):
 
         Args:
             nn: Neural network to be converted to a Bayesian neural network.
+            convert_in_place: Flag indicating input `nn` should be converted to
+                a BNN in place.
             args, kwargs: Passed as
                 bnn.utils.convert_to_bnn_(model=nn, *args, **kwargs)
         """
         super().__init__()
 
         # Convert the neural network to a Bayesian neural network.
+        if not convert_in_place:
+            nn = copy.deepcopy(nn)
         convert_to_bnn_(model=nn, *args, **kwargs)
         self.bnn = nn
 
