@@ -11,7 +11,7 @@ import torch
 import torch.distributions as dist
 
 import bnn.inference
-from bnn.inference import MomentPropagator, MonteCarlo, UnscentedTransform
+from bnn.inference import MomentPropagator
 from bnn.losses import kl_divergence_sampled
 from bnn.priors import Distribution
 from bnn.types import MuVar
@@ -99,21 +99,16 @@ def convert_to_bnn_(
         module = model.get_submodule(leaf)
         module_name = module.__class__.__name__
 
-        # Search for an appropriate module converter, defaulting to named converters
-        # sharing a name with this module.
+        # Search for an appropriate module converter, prioritizing named converters
+        # sharing a name with this module if they exist.
         module_kwargs = converter_kwargs_global | converter_kwargs.pop(module_name, {})
         if hasattr(current_module, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(current_module, module_name)(
                 module=module, **module_kwargs
             )
-        elif module.__class__.__name__ in HAS_COMPATIBLE_FUNCTIONAL:
-            # Create Bayesian version of this layer.
-            bayesian_layer = BayesianLayer(module=module, **module_kwargs)
         else:
-            # Use the "safe" converter which is expected to work for more
-            # modules than `BayesianLayer`.
-            bayesian_layer = BayesianLayerSafe(module=module, **module_kwargs)
+            bayesian_layer = BayesianModule(module=module, **module_kwargs)
 
         # Reset submodule to the converted module.
         model.set_submodule(leaf, bayesian_layer)
@@ -122,100 +117,6 @@ def convert_to_bnn_(
 class BayesianModule(torch.nn.Module):
     """Base class for BayesianModule modules to make PyTorch modules BNN compatible."""
 
-    def __init__(self, module: torch.nn.Module, *args, **kwargs):
-        super().__init__()
-        self.__name__ = module.__class__.__name__
-
-    @property
-    def module_params(self):
-        """Return a sample of this module's parameters."""
-        # Initialize the samplers on the fly to ensure we're on the same device
-        # as self._module_params.
-        samplers = {
-            key: val(
-                loc=self._module_params[key + "_mean"],
-                scale=self.scale_tform(self._module_params[key + "_rho"]),
-            )
-            for key, val in self.samplers.items()
-        }
-
-        return {key: val.sample() for key, val in samplers.items()}
-
-    def reset_parameters(self) -> None:
-        """Resample layer parameters from initial distributions."""
-        for key, param in self._module_params.items():
-            if param is not None:
-                param.data = self.samplers_init[key].sample(sample_shape=param.shape)
-
-    def compute_kl_divergence(
-        self, priors: Union[dict, Distribution] = None, n_samples: int = 1
-    ) -> torch.Tensor:
-        """Compute the KL divergence between self.prior and module parameters.
-
-        Args:
-            priors: Prior distribution over parameters.  This can be a single
-                distribution for all parameters or a dictionary whose keys
-                correspond to named parameters of this layer.  By default, None
-                will use self.priors.  This argument is used to allow external
-                passing of priors not defined at initialization of this layer.
-            n_samples: Number of Monte Carlo samples used to estimate KL
-                divergence for distributions not compatible with
-                torch.nn.distributions.kl_divergence()
-        """
-        # Return 0.0 if no learnable parameters are in this layer.
-        if len([p for p in self.parameters()]) == 0:
-            return torch.tensor(0.0)
-
-        # Reorganize priors if needed.
-        if priors is None:
-            priors = self.priors
-        elif not isinstance(priors, dict):
-            priors = {key: priors for key in self.samplers.keys()}
-
-        # Loop over parameters and compute KL contribution.
-        kl_divergence = []
-        for param_name, param_prior in priors.items():
-            # Compute KL divergence for this parameter.
-            try:
-                # Attempt to use PyTorch kl_divergence.  If our distributions
-                # aren't compatible, dist.kl_divergence kicks us to the except
-                # clause below.
-                kl_divergence.append(
-                    dist.kl_divergence(
-                        self.samplers[param_name](
-                            loc=self._module_params[param_name + "_mean"],
-                            scale=self.scale_tform(
-                                self._module_params[param_name + "_rho"]
-                            ),
-                        ),
-                        param_prior.distribution,
-                    ).sum()
-                )
-            except NotImplementedError:
-                # Compute Monte Carlo KL divergence.
-                kl_divergence.append(
-                    kl_divergence_sampled(
-                        dist0=self.samplers[param_name](
-                            loc=self._module_params[param_name + "_mean"],
-                            scale=self.scale_tform(
-                                self._module_params[param_name + "_rho"]
-                            ),
-                        ),
-                        dist1=param_prior.distribution,
-                        n_samples=n_samples,
-                    ).sum()
-                )
-
-        return torch.stack(kl_divergence).sum()
-
-    def forward(self, *args, **kwargs) -> Union[MuVar, torch.Tensor]:
-        """Forward pass through module."""
-        raise NotImplementedError
-
-
-class BayesianLayer(BayesianModule):
-    """Bayesian implementation of a generic PyTorch module."""
-
     def __init__(
         self,
         module: torch.nn.Module,
@@ -225,149 +126,8 @@ class BayesianLayer(BayesianModule):
         moment_propagator: MomentPropagator = None,
         *args,
         **kwargs,
-    ):
-        """BayesianLayer initializer.
-
-        Args:
-            module: Module with a functional version present in torch.nn.functional.
-                For such modules, we'll search for learnable parameters, create
-                their Bayesian counterparts under the mean-field approximation for
-                two parameter distributions (i.e., param -> (param_mean, param_var))
-            samplers: Dictionary of distributions that are sampled to return
-                parameters of this layer (i.e., the variational distributions).
-                These should be uninitialized or partially initialized
-                distributions that accept inputs `loc` and `scale` and return
-                an object with a .sample() method which returns tensors
-                corresponding to sampled parameters.  For example,
-                samplers["weight"](loc=0.0, scale=1.0).sample()
-                must return a tensor of size (out_features, in_features) if
-                module = torch.nn.Linear(in_features, out_features)
-            samplers_init: Dictionary of samplers that can be sampled to reset
-                parameters of this layer.  Each value is a tuple corresponding
-                to the mean and (unscaled, see `scale_tform` usage) standard deviation
-                parameters (e.g., samplers_init["weight_mean"].sample() should
-                return a shape (out_features, in_features) tensor defining
-                initial weight parameters).  Keys should match those in `samplers`.
-            priors: Dictionary of prior distributions over layer parameters.
-                These distributions should be initialized (like `samplers_init`)
-                and have a .sample() method returning a tensor of the same
-                size as the corresponding layer parameter and a .log_prob(x) method
-                returning the log of the PDF at input x in the distributions domain.
-                These distributions are used in self.compute_kl_divergence().
-                Keys should match those in `samplers`.
-            moment_propagator: Propagation module to propagate mean and variance
-                through this layer.
-        """
-        super().__init__(module=module)
-
-        # Validate `module` compatability with this class and find associated
-        # functional from torch.nn.functional.
-        functional = get_torch_functional(module.__class__)
-        assert (
-            functional is not None
-        ), "`module` must have a functional version in torch.nn.functional to use this class!"
-        self.functional = functional
-
-        # Parametrize the distributions of the Bayesian counterparts of each
-        # named parameter.  Each distribution will be parametrized by a
-        # mean and unscaled st. dev. parameter (rho) stored separately with
-        # _mean and _rho tags for clarity (as opposed to, e.g., storing as a
-        # parameter list).
-        _module_params = torch.nn.ParameterDict()
-        for param in module.named_parameters():
-            _module_params[param[0] + "_mean"] = torch.nn.Parameter(
-                torch.empty(
-                    param[1].shape,
-                    device=param[1].device,
-                    dtype=param[1].dtype,
-                ),
-                requires_grad=param[1].requires_grad,
-            )
-            _module_params[param[0] + "_rho"] = torch.nn.Parameter(
-                torch.empty(
-                    param[1].shape,
-                    device=param[1].device,
-                    dtype=param[1].dtype,
-                ),
-                requires_grad=param[1].requires_grad,
-            )
-        self._module_params = _module_params
-
-        # Set moment propagator.
-        if moment_propagator is None:
-            moment_propagator = select_default_propagator(module=module)
-        self.moment_propagator = moment_propagator
-
-        # Create samplers for each named parameter.
-        if samplers_init is None:
-            # Prepare (relatively arbitrary) default samplers.
-            samplers_init = {}
-            for key, val in _module_params.items():
-                if "_mean" in key:
-                    samplers_init[key] = dist.Uniform(
-                        low=-1.0 / np.sqrt(val.shape[-1]),
-                        high=1.0 / np.sqrt(val.shape[-1]),
-                    )
-                else:
-                    samplers_init[key] = dist.Uniform(
-                        low=-8.0,
-                        high=-2.0,
-                    )
-        self.samplers_init = samplers_init
-        self.reset_parameters()
-
-        # Initialize variational distribution samplers.
-        scale_tform = torch.nn.functional.softplus
-        self.scale_tform = scale_tform
-        if samplers is None:
-            samplers = {key: dist.Normal for key, _ in module.named_parameters()}
-        self.samplers = samplers
-
-        # Set priors.
-        if priors is None:
-            # Default to same distributions as `samplers_init` mean samplers.
-            priors = {key: samplers_init[key + "_mean"] for key in samplers.keys()}
-        self.priors = priors
-
-    def forward(
-        self,
-        input: Union[MuVar, torch.Tensor],
-        *args,
-        **kwargs,
-    ) -> Union[MuVar, torch.Tensor]:
-        """Forward pass through layer."""
-        if isinstance(input, MuVar):
-            # Propagate mean and variance through layer.
-            out = self.moment_propagator(
-                module=self,
-                input=input,
-                *args,
-                **kwargs,
-            )
-        else:
-            # Compute forward pass with a random sample of parameters.
-            out = self.functional(input=input, **self.module_params)
-
-        return out
-
-
-class BayesianLayerSafe(BayesianModule):
-    """Bayesian implementation of a generic PyTorch module.
-
-    Compared to BayesianLayer, this Converter is expected to work in more
-    general cases at the expense of potentially increased memory costs."""
-
-    def __init__(
-        self,
-        module: torch.nn.Module,
-        samplers: dict = None,
-        samplers_init: dict = None,
-        priors: dict = None,
-        moment_propagator: MomentPropagator = None,
-        *args,
-        **kwargs,
-    ):
-        """BayesianLayerSafe initializer.
+    ) -> None:
+        """BayesianModule initializer.
 
         Args:
             module: Module with parameters that we wish to treat as distributions
@@ -398,7 +158,8 @@ class BayesianLayerSafe(BayesianModule):
             moment_propagator: Propagation module to propagate mean and variance
                 through this layer.
         """
-        super().__init__(module=module)
+        super().__init__(*args, **kwargs)
+        self.__name__ = module.__class__.__name__
 
         # Store `module` and a copy of `module` to act as the mean and unscaled
         # st. dev. parameters (rho), respectively.
@@ -470,6 +231,21 @@ class BayesianLayerSafe(BayesianModule):
         self.priors = priors
 
     @property
+    def module_params(self):
+        """Return a sample of this module's parameters."""
+        # Initialize the samplers on the fly to ensure we're on the same device
+        # as self._module_params.
+        samplers = {
+            key: val(
+                loc=self._module_params[key + "_mean"],
+                scale=self.scale_tform(self._module_params[key + "_rho"]),
+            )
+            for key, val in self.samplers.items()
+        }
+
+        return {key: val.sample() for key, val in samplers.items()}
+
+    @property
     def functional(self) -> torch.nn.Module:
         """Prepare a callable that acts like input `module` with random parameters."""
         if self._functional is None:
@@ -492,6 +268,73 @@ class BayesianLayerSafe(BayesianModule):
         else:
             # Return the functional with sampled parameters pre-populated.
             return functools.partial(self._functional, **self.module_params)
+
+    def reset_parameters(self) -> None:
+        """Resample layer parameters from initial distributions."""
+        for key, param in self._module_params.items():
+            if param is not None:
+                param.data = self.samplers_init[key].sample(sample_shape=param.shape)
+
+    def compute_kl_divergence(
+        self, priors: Union[dict, Distribution] = None, n_samples: int = 1
+    ) -> torch.Tensor:
+        """Compute the KL divergence between self.prior and module parameters.
+
+        Args:
+            priors: Prior distribution over parameters.  This can be a single
+                distribution for all parameters or a dictionary whose keys
+                correspond to named parameters of this layer.  By default, None
+                will use self.priors.  This argument is used to allow external
+                passing of priors not defined at initialization of this layer.
+            n_samples: Number of Monte Carlo samples used to estimate KL
+                divergence for distributions not compatible with
+                torch.nn.distributions.kl_divergence()
+        """
+        # Return 0.0 if no learnable parameters are in this layer.
+        if len([p for p in self.parameters()]) == 0:
+            return torch.tensor(0.0)
+
+        # Reorganize priors if needed.
+        if priors is None:
+            priors = self.priors
+        elif not isinstance(priors, dict):
+            priors = {key: priors for key in self.samplers.keys()}
+
+        # Loop over parameters and compute KL contribution.
+        kl_divergence = []
+        for param_name, param_prior in priors.items():
+            # Compute KL divergence for this parameter.
+            try:
+                # Attempt to use PyTorch kl_divergence.  If our distributions
+                # aren't compatible, dist.kl_divergence kicks us to the except
+                # clause below.
+                kl_divergence.append(
+                    dist.kl_divergence(
+                        self.samplers[param_name](
+                            loc=self._module_params[param_name + "_mean"],
+                            scale=self.scale_tform(
+                                self._module_params[param_name + "_rho"]
+                            ),
+                        ),
+                        param_prior.distribution,
+                    ).sum()
+                )
+            except NotImplementedError:
+                # Compute Monte Carlo KL divergence.
+                kl_divergence.append(
+                    kl_divergence_sampled(
+                        dist0=self.samplers[param_name](
+                            loc=self._module_params[param_name + "_mean"],
+                            scale=self.scale_tform(
+                                self._module_params[param_name + "_rho"]
+                            ),
+                        ),
+                        dist1=param_prior.distribution,
+                        n_samples=n_samples,
+                    ).sum()
+                )
+
+        return torch.stack(kl_divergence).sum()
 
     def forward(
         self,
@@ -524,20 +367,20 @@ if __name__ == "__main__":
     in_features = 3
     out_features = 1
     linear = torch.nn.Linear(in_features=in_features, out_features=out_features)
-    bayesian_linear = BayesianLayer(
+    bayesian_linear = BayesianModule(
         module=linear,
     )
 
     # Usage with MonteCarlo moment propagation through layer.
     n_samples = 100
-    bayesian_linear_mc = BayesianLayer(
+    bayesian_linear_mc = BayesianModule(
         module=linear,
-        moment_propagator=MonteCarlo(n_samples=n_samples),
+        moment_propagator=bnn.inference.MonteCarlo(n_samples=n_samples),
     )  # computes moments from Monte Carlo without returning actual samples
     bayesian_linear_mc.load_state_dict(bayesian_linear.state_dict())
 
     # Usage with analytical moment propagation through layer.
-    bayesian_linear_det = BayesianLayer(
+    bayesian_linear_det = BayesianModule(
         module=linear,
         moment_propagator=Linear(),
     )  # analytically computes moments
