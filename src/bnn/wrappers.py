@@ -36,6 +36,24 @@ HAS_COMPATIBLE_FUNCTIONAL = [
 current_module = sys.modules[__name__]
 
 
+def select_default_propagator(module: torch.nn.Module) -> MomentPropagator:
+    """Select a compatible moment propagator for `module`"""
+    if hasattr(bnn.inference, module.__class__.__name__):
+        # A custom propagator exists for this module so we'll use that.
+        propagator = getattr(bnn.inference, module.__class__.__name__)
+        moment_propagator = propagator()
+    elif len([p for p in module.parameters() if p.requires_grad]) == 0:
+        # If this module doesn't have learnable parameters we'll
+        # default use the unscented transform.
+        moment_propagator = bnn.inference.UnscentedTransform()
+    else:
+        # With learnable Bayesian parameters, we'll default to
+        # Monte Carlo sampling.
+        moment_propagator = bnn.inference.MonteCarlo()
+
+    return moment_propagator
+
+
 def convert_to_bnn_(
     model: torch.nn.Module,
     converter_kwargs: dict = {},
@@ -101,8 +119,8 @@ def convert_to_bnn_(
         model.set_submodule(leaf, bayesian_layer)
 
 
-class Converter(torch.nn.Module):
-    """Base class for Converter modules to make PyTorch modules BNN compatible."""
+class BayesianModule(torch.nn.Module):
+    """Base class for BayesianModule modules to make PyTorch modules BNN compatible."""
 
     def __init__(self, module: torch.nn.Module, *args, **kwargs):
         super().__init__()
@@ -131,7 +149,7 @@ class Converter(torch.nn.Module):
 
     def compute_kl_divergence(
         self, priors: Union[dict, Distribution] = None, n_samples: int = 1
-    ) -> torch.tensor:
+    ) -> torch.Tensor:
         """Compute the KL divergence between self.prior and module parameters.
 
         Args:
@@ -190,12 +208,12 @@ class Converter(torch.nn.Module):
 
         return torch.stack(kl_divergence).sum()
 
-    def forward(self, *args, **kwargs) -> tuple[torch.tensor, torch.tensor]:
+    def forward(self, *args, **kwargs) -> Union[MuVar, torch.Tensor]:
         """Forward pass through module."""
         raise NotImplementedError
 
 
-class BayesianLayer(Converter):
+class BayesianLayer(BayesianModule):
     """Bayesian implementation of a generic PyTorch module."""
 
     def __init__(
@@ -205,7 +223,6 @@ class BayesianLayer(Converter):
         samplers_init: dict = None,
         priors: dict = None,
         moment_propagator: MomentPropagator = None,
-        propagate_moments: bool = True,
         *args,
         **kwargs,
     ):
@@ -240,9 +257,6 @@ class BayesianLayer(Converter):
                 Keys should match those in `samplers`.
             moment_propagator: Propagation module to propagate mean and variance
                 through this layer.
-            propagate_moments: Flag indicating forward pass should use
-                `moment_propagator` to compute the output mean and variance from
-                this layer.
         """
         super().__init__(module=module)
 
@@ -280,20 +294,8 @@ class BayesianLayer(Converter):
         self._module_params = _module_params
 
         # Set moment propagator.
-        self.propagate_moments = propagate_moments
         if moment_propagator is None:
-            if hasattr(bnn.inference, module.__class__.__name__):
-                # A custom propagator exists for this module so we'll use that.
-                propagator = getattr(bnn.inference, module.__class__.__name__)
-                moment_propagator = propagator()
-            elif len(_module_params) == 0:
-                # If this module doesn't have learnable parameters we'll
-                # default use the unscented transform.
-                moment_propagator = UnscentedTransform()
-            else:
-                # With learnable Bayesian parameters, we'll default to
-                # Monte Carlo sampling.
-                moment_propagator = MonteCarlo()
+            moment_propagator = select_default_propagator(module=module)
         self.moment_propagator = moment_propagator
 
         # Create samplers for each named parameter.
@@ -329,10 +331,10 @@ class BayesianLayer(Converter):
 
     def forward(
         self,
-        input: Union[MuVar, torch.tensor],
+        input: Union[MuVar, torch.Tensor],
         *args,
         **kwargs,
-    ) -> Union[MuVar, torch.tensor]:
+    ) -> Union[MuVar, torch.Tensor]:
         """Forward pass through layer."""
         if isinstance(input, MuVar):
             # Propagate mean and variance through layer.
@@ -349,7 +351,7 @@ class BayesianLayer(Converter):
         return out
 
 
-class BayesianLayerSafe(Converter):
+class BayesianLayerSafe(BayesianModule):
     """Bayesian implementation of a generic PyTorch module.
 
     Compared to BayesianLayer, this Converter is expected to work in more
@@ -362,7 +364,6 @@ class BayesianLayerSafe(Converter):
         samplers_init: dict = None,
         priors: dict = None,
         moment_propagator: MomentPropagator = None,
-        propagate_moments: bool = True,
         *args,
         **kwargs,
     ):
@@ -396,9 +397,6 @@ class BayesianLayerSafe(Converter):
                 Keys should match those in `samplers`.
             moment_propagator: Propagation module to propagate mean and variance
                 through this layer.
-            propagate_moments: Flag indicating forward pass should use
-                `moment_propagator` to compute the output mean and variance from
-                this layer.
         """
         super().__init__(module=module)
 
@@ -436,20 +434,8 @@ class BayesianLayerSafe(Converter):
 
         # Validate and set moment propagator.
         # Set moment propagator.
-        self.propagate_moments = propagate_moments
         if moment_propagator is None:
-            if hasattr(bnn.inference, module.__class__.__name__):
-                # A custom propagator exists for this module so we'll use that.
-                propagator = getattr(bnn.inference, module.__class__.__name__)
-                moment_propagator = propagator()
-            elif len(_module_params) == 0:
-                # If this module doesn't have learnable parameters we'll
-                # default to the unscented transform.
-                moment_propagator = UnscentedTransform()
-            else:
-                # With learnable Bayesian parameters, we'll default to
-                # Monte Carlo sampling.
-                moment_propagator = MonteCarlo()
+            moment_propagator = select_default_propagator(module=module)
         self.moment_propagator = moment_propagator
 
         # Create samplers for each named parameter.
@@ -509,10 +495,10 @@ class BayesianLayerSafe(Converter):
 
     def forward(
         self,
-        input: Union[MuVar, torch.tensor],
+        input: Union[MuVar, torch.Tensor],
         *args,
         **kwargs,
-    ) -> Union[MuVar, torch.tensor]:
+    ) -> Union[MuVar, torch.Tensor]:
         """Forward pass through layer."""
         if isinstance(input, MuVar):
             # Propagate mean and variance through layer.
@@ -540,16 +526,12 @@ if __name__ == "__main__":
     linear = torch.nn.Linear(in_features=in_features, out_features=out_features)
     bayesian_linear = BayesianLayer(
         module=linear,
-        propagate_moments=False,
     )
 
-    bayesian_linear = BayesianLayerSafe(module=linear)
-    bayesian_linear(MuVar(torch.ones((1, 3)), torch.ones((1, 3))))
     # Usage with MonteCarlo moment propagation through layer.
     n_samples = 100
     bayesian_linear_mc = BayesianLayer(
         module=linear,
-        propagate_moments=True,
         moment_propagator=MonteCarlo(n_samples=n_samples),
     )  # computes moments from Monte Carlo without returning actual samples
     bayesian_linear_mc.load_state_dict(bayesian_linear.state_dict())
@@ -557,17 +539,17 @@ if __name__ == "__main__":
     # Usage with analytical moment propagation through layer.
     bayesian_linear_det = BayesianLayer(
         module=linear,
-        propagate_moments=True,
         moment_propagator=Linear(),
     )  # analytically computes moments
     bayesian_linear_det.load_state_dict(bayesian_linear.state_dict())
 
-    # Generate example outputs.
+    # Generate example outputs.  Wrapping input in type MuVar will signal the
+    # layers to use their moment_propagator modules instead of sampling.
     batch_size = 1
     input = torch.randn(batch_size, in_features)
     output_samples = torch.stack([bayesian_linear(input)[0] for _ in range(n_samples)])
-    output_mc = bayesian_linear_mc(input)
-    output_det = bayesian_linear_det(input)
+    output_mc = bayesian_linear_mc(MuVar(input))
+    output_det = bayesian_linear_det(MuVar(input))
 
     # Overlay deterministic predictions on Monte Carlo samples.
     plt.hist(output_samples.detach().cpu().squeeze(), density=True)

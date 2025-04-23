@@ -30,11 +30,11 @@ class Distribution(torch.nn.Module):
                 setattr(self._distribution, key, buffer_val)
         return self._distribution
 
-    def log_prob(self, x: torch.tensor) -> torch.tensor:
+    def log_prob(self, x: torch.Tensor) -> torch.Tensor:
         """Compute the log PDF of the prior at points `x`."""
         return self.distribution.log_prob(x)
 
-    def sample(self, sample_shape: Iterable = (1,)) -> torch.tensor:
+    def sample(self, sample_shape: Iterable = (1,)) -> torch.Tensor:
         """Generate samples from the prior of size `sample_shape`."""
         return self.distribution.sample(sample_shape=sample_shape)
 
@@ -44,9 +44,9 @@ class SpikeSlab(Distribution):
 
     def __init__(
         self,
-        loc: torch.tensor = torch.tensor([0.0, 0.0]),
-        scale: torch.tensor = torch.tensor([0.1, 1.0]),
-        probs: torch.tensor = torch.tensor([0.5, 0.5]),
+        loc: torch.Tensor = torch.tensor([0.0, 0.0]),
+        scale: torch.Tensor = torch.tensor([0.1, 1.0]),
+        probs: torch.Tensor = torch.tensor([0.5, 0.5]),
     ):
         super().__init__()
 

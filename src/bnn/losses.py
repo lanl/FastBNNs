@@ -41,7 +41,7 @@ class KLDivergence(_Loss):
     def forward(
         self,
         model: torch.nn.Module,
-    ) -> torch.tensor:
+    ) -> torch.Tensor:
         """Compute KL divergence for Bayesian sub-modules of `model`.
 
         Args:
@@ -101,7 +101,7 @@ class ELBO(_Loss):
         self.kl_divergence = kl_divergence
         self.beta = beta
 
-    def forward(self, model: torch.nn.Module = None, **kwargs) -> torch.tensor:
+    def forward(self, model: torch.nn.Module = None, **kwargs) -> torch.Tensor:
         """Compute the ELBO loss.
 
         Args:

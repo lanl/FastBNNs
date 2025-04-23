@@ -34,7 +34,7 @@ class MLP(torch.nn.Module):
         )
         self.module_list = torch.nn.ModuleList(modules)
 
-    def forward(self, x: torch.tensor) -> torch.tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         for layer in self.module_list:
             x = layer(x)
         return x

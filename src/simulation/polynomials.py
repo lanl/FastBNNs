@@ -7,8 +7,8 @@ import torch
 
 
 def polynomial(
-    x: Union[float, torch.tensor], order: int = 1, coefficients: Iterable = [0.0, 1.0]
-) -> Union[float, torch.tensor]:
+    x: Union[float, torch.Tensor], order: int = 1, coefficients: Iterable = [0.0, 1.0]
+) -> Union[float, torch.Tensor]:
     """Basic polynomial.
 
     Args:

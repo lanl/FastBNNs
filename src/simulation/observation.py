@@ -61,7 +61,7 @@ class NoiseTransform(torch.nn.Module):
         self.noise_fxn_kwargs = noise_fxn_kwargs
         self.noise_fxn_kwargs_generator = noise_fxn_kwargs_generator
 
-    def forward(self, x: torch.tensor) -> torch.tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass to generate noisy `x`."""
         # Generate x-dependent arguments and merge with noise_fxn_kwargs.
         generated_kwargs = {

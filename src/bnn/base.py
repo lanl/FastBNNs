@@ -1,6 +1,6 @@
 """Bayesian neural network base module(s) and utilities."""
 
-from typing import Any, Iterator
+from typing import Any, Iterator, Union
 
 import lightning as L
 import torch
@@ -21,6 +21,10 @@ class BNN(torch.nn.Module):
                 containing the suffixes "_mean" and "_rho".  If the input `nn`
                 has parameters containing these strings, this class may not
                 behave as expected!
+            (2): The forward pass of `nn` is assumed to accept a single tensor
+                representing the input.  The conversion to a BNN will hijack
+                the forward pass through `nn` by changing the type of this
+                input tensor.
 
         Args:
             nn: Neural network to be converted to a Bayesian neural network.
@@ -39,15 +43,15 @@ class BNN(torch.nn.Module):
             if tag in name:
                 yield name, param
 
-    def load_state_dict(
-        self, state_dict: dict, strict: bool = True, assign: bool = False
-    ):
-        """Overloaded load_state_dict() that can mean parameters from a non-Bayesian network."""
-        return super().load_state_dict(state_dict, strict, assign)
+    # def load_state_dict(
+    #     self, state_dict: dict, strict: bool = True, assign: bool = False
+    # ):
+    #     """Overloaded load_state_dict() that can mean parameters from a non-Bayesian network."""
+    #     return super().load_state_dict(state_dict, strict, assign)
 
-    def forward(self, *args, **kwargs) -> Any:
+    def forward(self, input: Union[MuVar, torch.Tensor], *args, **kwargs) -> Any:
         """Forward pass through BNN."""
-        return self.bnn(*args, **kwargs)
+        return self.bnn(input, *args, **kwargs)
 
 
 class BNNLightning(L.LightningModule):

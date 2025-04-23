@@ -17,8 +17,8 @@ from bnn.types import MuVar
 
 
 def select_default_sigmas(
-    mu: torch.tensor, var: torch.tensor, n_sigma_points: int = 3, kappa: int = 2
-) -> tuple[torch.tensor, torch.tensor]:
+    mu: torch.Tensor, var: torch.Tensor, n_sigma_points: int = 3, kappa: int = 2
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Select sigma points for use in the unscented transform as in [1].
 
     [1] https://doi.org/10.1117/12.280797
@@ -64,9 +64,9 @@ class MomentPropagator(torch.nn.Module):
     def forward(
         self,
         module: torch.nn.Module,
-        input_mu: Union[tuple, torch.tensor],
-        input_var: torch.tensor = None,
-    ) -> tuple[torch.tensor, torch.tensor]:
+        input_mu: Union[tuple, torch.Tensor],
+        input_var: torch.Tensor = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward method for MomentPropagator modules.
 
         Args:
@@ -155,11 +155,15 @@ class MonteCarlo(MomentPropagator):
         return_samples: bool = False,
     ) -> Union[MuVar, tuple]:
         """Propagate moments by averaging over n_samples forward passes of module."""
-        # If input_var is provided, we also need to sample the input distribution.
-        input_dist = self.input_sampler(loc=input[0], scale=input[1].sqrt())
-        samples = torch.stack(
-            [module(input_dist.sample()) for _ in range(self.n_samples)]
-        )
+        # If the input variance is greater than zero, we'll need to sample the
+        # input as well.
+        if (input[1] > 0.0).all():
+            input_dist = self.input_sampler(loc=input[0], scale=input[1].sqrt())
+            samples = torch.stack(
+                [module(input_dist.sample()) for _ in range(self.n_samples)]
+            )
+        else:
+            samples = torch.stack([module(input[0]) for _ in range(self.n_samples)])
 
         if return_samples:
             return MuVar(samples.mean(dim=0), samples.var(dim=0)), samples

@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import torch
 
-from simulation import generators, polynomials, observation
+from simulation import generators, observation
 
 
 class SimulatedData(torch.utils.data.Dataset):
@@ -31,7 +31,7 @@ class SimulatedData(torch.utils.data.Dataset):
     def __len__(self) -> int:
         return self._len
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> dict:
         data_dict = self.data_generator()
         if self.transform is not None:
             data_dict["output"] = self.transform(data_dict["output"])
