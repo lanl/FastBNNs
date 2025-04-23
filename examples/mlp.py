@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from bnn import base, losses, priors
+from bnn import base, losses, priors, types
 from datasets import generic
 from models import mlp
 from simulation import generators, polynomials, observation
@@ -72,7 +72,7 @@ for epoch in range(n_epochs):
     for batch in dataloader:
         # Forward pass through model.
         optimizer.zero_grad()
-        out = bnn(batch["input"]["x"].to(device))
+        out = bnn(types.MuVar(batch["input"]["x"].to(device)))
 
         # Compute loss.
         loss = loss_fn(

@@ -43,12 +43,6 @@ class BNN(torch.nn.Module):
             if tag in name:
                 yield name, param
 
-    # def load_state_dict(
-    #     self, state_dict: dict, strict: bool = True, assign: bool = False
-    # ):
-    #     """Overloaded load_state_dict() that can mean parameters from a non-Bayesian network."""
-    #     return super().load_state_dict(state_dict, strict, assign)
-
     def forward(self, input: Union[MuVar, torch.Tensor], *args, **kwargs) -> Any:
         """Forward pass through BNN."""
         return self.bnn(input, *args, **kwargs)

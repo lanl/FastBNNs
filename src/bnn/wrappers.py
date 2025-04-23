@@ -25,12 +25,21 @@ from utils.misc import get_torch_functional
 HAS_COMPATIBLE_FUNCTIONAL = [
     "Linear",
     "Bilinear",
-    "AvgPool1d",
-    "AvgPool2d",
-    "AvgPool3d",
-    "MaxPool1d",
-    "MaxPool2d",
-    "MaxPool3d",
+    *[f"AvgPool{n+1}d" for n in range(3)],
+    *[f"MaxPool{n+1}d" for n in range(3)],
+]
+
+# Define layers that can be applied to input mean and variance without additional
+# processing (e.g., a flatten layer, which only changes the shape of the input).
+PASSTHROUGH = [
+    "Identity",
+    "Flatten",
+    "Unflatten",
+    *[f"ReflectionPad{n+1}d" for n in range(3)],
+    *[f"ReplicationPad{n+1}d" for n in range(3)],
+    *[f"ZeroPad{n+1}d" for n in range(3)],
+    *[f"ConstantPad{n+1}d" for n in range(3)],
+    *[f"CircularPad{n+1}d" for n in range(3)],
 ]
 
 current_module = sys.modules[__name__]
@@ -107,6 +116,10 @@ def convert_to_bnn_(
             bayesian_layer = getattr(current_module, module_name)(
                 module=module, **module_kwargs
             )
+        elif module_name in PASSTHROUGH:
+            # This module can be broadcast along (mu, var) without additional
+            # processing (e.g., a flatten layer, which only changes shapes).
+            bayesian_layer = PassthroughModule(module=module, **module_kwargs)
         else:
             bayesian_layer = BayesianModule(module=module, **module_kwargs)
 
@@ -246,7 +259,7 @@ class BayesianModule(torch.nn.Module):
         return {key: val.sample() for key, val in samplers.items()}
 
     @property
-    def functional(self) -> torch.nn.Module:
+    def module(self) -> torch.nn.Module:
         """Prepare a callable that acts like input `module` with random parameters."""
         if self._functional is None:
             # No functional is available/compatible with this converter so we'll use
@@ -353,7 +366,44 @@ class BayesianModule(torch.nn.Module):
             )
         else:
             # Compute forward pass with a random sample of parameters.
-            out = self.functional(input=input, *args, **kwargs)
+            out = self.module(input=input, *args, **kwargs)
+
+        return out
+
+
+class PassthroughModule(torch.nn.Module):
+    """PassthroughModule for compatibility with other Bayesian layers."""
+
+    def __init__(
+        self,
+        module: torch.nn.Module,
+        *args,
+        **kwargs,
+    ) -> None:
+        """PassthroughModule initializer.
+
+        Args:
+            module: Module that will be applied in forward pass.  When the
+                output of the previous layer is a MuVar type, module is
+                simply broadcast across both elements of MuVar.
+        """
+        super().__init__(*args, **kwargs)
+        self.__name__ = module.__class__.__name__
+        self.module = module
+
+    def forward(
+        self,
+        input: Union[MuVar, torch.Tensor],
+        *args,
+        **kwargs,
+    ) -> Union[MuVar, torch.Tensor]:
+        """Forward pass through layer."""
+        if isinstance(input, MuVar):
+            # Propagate mean and variance through layer.
+            out = MuVar(self.module(input[0]), self.module(input[1]))
+        else:
+            # Compute forward pass with a random sample of parameters.
+            out = self.module(input)
 
         return out
 

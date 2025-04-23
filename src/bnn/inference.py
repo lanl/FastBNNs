@@ -194,12 +194,12 @@ class Linear(MomentPropagator):
         else:
             bias_params = (None, None)
 
-        mu = module.functional(
+        mu = torch.nn.functional.linear(
             input=input[0],
             weight=module._module_params["weight_mean"],
             bias=bias_params[0],
         )
-        var = module.functional(
+        var = torch.nn.functional.linear(
             input=input[0] ** 2,
             weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
             bias=(
@@ -210,7 +210,7 @@ class Linear(MomentPropagator):
         )
 
         # Add input variance contribution.
-        var += module.functional(
+        var += torch.nn.functional.linear(
             input=input[1],
             weight=module._module_params["weight_mean"] ** 2
             + module.scale_tform(module._module_params["weight_rho"]) ** 2,
@@ -218,6 +218,103 @@ class Linear(MomentPropagator):
         )
 
         return MuVar(mu, var)
+
+
+class ConvNd(MomentPropagator):
+    """Deterministic moment propagation of mean and variance through a ConvNd layer."""
+
+    def __init__(self):
+        """Initializer for ConvNd inference module"""
+        super().__init__()
+
+    def forward(
+        self,
+        module: torch.nn.Module,
+        input: MuVar,
+    ) -> MuVar:
+        """Analytical moment propagation through layer."""
+        # Prepare functional.
+        functional_kwargs = {
+            "stride": module.mu.stride,
+            "padding": module.mu.padding,
+            "dilation": module.mu.dilation,
+            "groups": module.mu.groups,
+        }
+        functional = getattr(torch.nn.functional, f"conv{module.__name__[4]}d")
+
+        # Compute analytical result under mean-field approximation following
+        # https://doi.org/10.48550/arXiv.2402.14532
+        if "bias_mean" in module._module_params.keys():
+            bias_params = (
+                module._module_params["bias_mean"],
+                module._module_params["bias_rho"],
+            )
+        else:
+            bias_params = (None, None)
+
+        mu = functional(
+            input=input[0],
+            weight=module._module_params["weight_mean"],
+            bias=bias_params[0],
+            **functional_kwargs,
+        )
+        var = functional(
+            input=input[0] ** 2,
+            weight=module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            bias=(
+                None
+                if bias_params[1] is None
+                else module.scale_tform(bias_params[1]) ** 2
+            ),
+            **functional_kwargs,
+        )
+
+        # Add input variance contribution.
+        var += functional(
+            input=input[1],
+            weight=module._module_params["weight_mean"] ** 2
+            + module.scale_tform(module._module_params["weight_rho"]) ** 2,
+            bias=None,
+            **functional_kwargs,
+        )
+
+        return MuVar(mu, var)
+
+
+class Conv1d(ConvNd):
+    """Deterministic moment propagation of mean and variance through a Conv1d layer.
+
+    The internal logic is identical to ConvNd so we just create this class for compatibility
+    with module-name-based searches.
+    """
+
+    def __init__(self):
+        """Initializer for Conv1d inference module"""
+        super().__init__()
+
+
+class Conv2d(ConvNd):
+    """Deterministic moment propagation of mean and variance through a Conv2d layer.
+
+    The internal logic is identical to ConvNd so we just create this class for compatibility
+    with module-name-based searches.
+    """
+
+    def __init__(self):
+        """Initializer for Conv2d inference module"""
+        super().__init__()
+
+
+class Conv3d(ConvNd):
+    """Deterministic moment propagation of mean and variance through a Conv3d layer.
+
+    The internal logic is identical to ConvNd so we just create this class for compatibility
+    with module-name-based searches.
+    """
+
+    def __init__(self):
+        """Initializer for Conv3d inference module"""
+        super().__init__()
 
 
 if __name__ == "__main__":
