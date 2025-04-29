@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 
-def set_requires_grad(module: torch.nn.Module, requires_grad: bool, tag: str) -> None:
+def set_requires_grad_(module: torch.nn.Module, requires_grad: bool, tag: str) -> None:
     """Set requires_grad property of all parameters whose name contains `tag`."""
     for param_name, param_value in module.named_parameters():
         if tag in param_name:
