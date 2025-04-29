@@ -1,5 +1,6 @@
 """Collections of Bayesian neural network layers."""
 
+from abc import ABC, abstractmethod
 import copy
 import functools
 import re
@@ -32,6 +33,7 @@ HAS_COMPATIBLE_FUNCTIONAL = [
 # Define layers that can be applied to input mean and variance without additional
 # processing (e.g., a flatten layer, which only changes the shape of the input).
 PASSTHROUGH = [
+    "ChannelShuffle",
     "Identity",
     "Flatten",
     "Unflatten",
@@ -41,6 +43,7 @@ PASSTHROUGH = [
     *[f"ConstantPad{n+1}d" for n in range(3)],
     *[f"CircularPad{n+1}d" for n in range(3)],
 ]
+
 
 current_module = sys.modules[__name__]
 
@@ -133,7 +136,25 @@ def convert_to_bnn_(
         model.set_submodule(leaf, bayesian_layer)
 
 
-class BayesianModule(torch.nn.Module):
+class BayesianModuleBase(ABC):
+    """Abstract base class for Bayesian modules."""
+
+    @property
+    @abstractmethod
+    def module(self, *args, **kwargs) -> torch.nn.Module:
+        pass
+
+    @abstractmethod
+    def forward(
+        self,
+        input: Union[MuVar, torch.Tensor],
+        *args,
+        **kwargs,
+    ) -> Union[MuVar, torch.Tensor]:
+        pass
+
+
+class BayesianModule(BayesianModuleBase, torch.nn.Module):
     """Base class for BayesianModule modules to make PyTorch modules BNN compatible."""
 
     def __init__(
@@ -256,7 +277,7 @@ class BayesianModule(torch.nn.Module):
         self.priors = priors
 
     @property
-    def module_params(self):
+    def module_params(self) -> dict:
         """Return a sample of this module's parameters."""
         # Initialize the samplers on the fly to ensure we're on the same device
         # as self._module_params.
@@ -378,7 +399,7 @@ class BayesianModule(torch.nn.Module):
             )
         else:
             # Compute forward pass with a random sample of parameters.
-            out = self.module(input=input, *args, **kwargs)
+            out = self.module(input, *args, **kwargs)
 
         return out
 
