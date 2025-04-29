@@ -122,7 +122,8 @@ class UnscentedTransform(MomentPropagator):
             mu_samples = []
             var_samples = []
             for s in range(self.n_module_samples):
-                samples = torch.stack([module(s) for s in sigma_points])
+                module_sample = module.module
+                samples = torch.stack([module_sample(s) for s in sigma_points])
                 mu_samples.append(torch.einsum("i,i...->...", weights, samples))
                 var_samples.append(
                     torch.einsum(
@@ -130,13 +131,19 @@ class UnscentedTransform(MomentPropagator):
                     )
                 )
 
-            # Combine estimates from each unscented transform
+            # Combine estimates from each unscented transform using law of total
+            # expectation and law of total variance.
             mu = torch.stack(mu_samples).mean(dim=0)
             var = torch.stack(var_samples).mean(dim=0) + torch.stack(mu_samples).var(
                 dim=0
             )
         else:
-            samples = torch.stack([module(s) for s in sigma_points])
+            # Prepare a sampled instance of the module.  For stochastic modules,
+            # module.module returns a new sample of weighs each time, so
+            # we need to prepare the instance before running .forward() on each
+            # sigma point.
+            module_sample = module.module
+            samples = torch.stack([module_sample(s) for s in sigma_points])
             mu = torch.einsum("i,i...->...", weights, samples)
             var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
 
