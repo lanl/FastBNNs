@@ -112,7 +112,7 @@ class ELBO(_Loss):
                 their prior.  Passing None is treated as no model, i.e., KL = 0.0
             kwargs: Keyword arguments to pass to self.log_likelihood(**kwargs)
         """
-        if (model is None) or (self.beta == 0.0):
+        if (model is None) or (self.beta == 0.0) or (self.kl_divergence is None):
             return self.neg_log_likelihood(**kwargs)
         else:
             return self.neg_log_likelihood(**kwargs) + self.beta * self.kl_divergence(
