@@ -51,7 +51,7 @@ class KLDivergence(_Loss):
         """
         kl = []
         for module in model.named_modules():
-            module_parameters = [p for p in module[1].parameters()]
+            module_parameters = [p for p in module[1].parameters() if p.requires_grad]
             if (
                 hasattr(module[1], "compute_kl_divergence")
                 and (len(module_parameters) > 0)

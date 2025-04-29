@@ -91,6 +91,7 @@ def convert_to_bnn_(
     model: torch.nn.Module,
     wrapper_kwargs: dict = {},
     wrapper_kwargs_global: dict = {},
+    passthrough_module_tags: list = [],
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -104,6 +105,10 @@ def convert_to_bnn_(
         wrapper_kwargs_global: Keyword arguments that we'll merge
             with values of bayesian_module_kwargs as, e.g.,
             Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
+        passthrough_module_tags: List of strings that, if present in the class
+            name of a module, will indicate the module should be treated as a
+            passthrough module: i.e., apply forward method to mean and variance
+            directly without additional logic.
     """
     # Search for modules of `model` to convert, removing stem modules from the
     # list (we just want the leaf modules that contain parameters).
@@ -118,17 +123,24 @@ def convert_to_bnn_(
         # Prepare module arguments.
         module_kwargs = wrapper_kwargs_global | wrapper_kwargs.pop(leaf, {})
 
-        # Search for an appropriate module converter, prioritizing named converters
-        # sharing a name with this module if they exist.
-        if hasattr(current_module, module_name):
+        # Search for an appropriate module converter, in the following order of
+        # priority:
+        #   (1) Passthrough layer if tagged by passthrough_module_tags or listed
+        #       in PASSTHROUGH list.
+        #   (2) Named converters if a wrapper exists with the same name as the
+        #       module class.
+        #   (3) BayesianModule
+        if (module_name in PASSTHROUGH) or any(
+            [tag in module_name for tag in passthrough_module_tags]
+        ):
+            # This module can be broadcast along (mu, var) without additional
+            # processing (e.g., a flatten layer, which only changes shapes).
+            bayesian_layer = PassthroughModule(module=module, **module_kwargs)
+        elif hasattr(current_module, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(current_module, module_name)(
                 module=module, **module_kwargs
             )
-        elif module_name in PASSTHROUGH:
-            # This module can be broadcast along (mu, var) without additional
-            # processing (e.g., a flatten layer, which only changes shapes).
-            bayesian_layer = PassthroughModule(module=module, **module_kwargs)
         else:
             bayesian_layer = BayesianModule(module=module, **module_kwargs)
 
@@ -139,9 +151,32 @@ def convert_to_bnn_(
 class BayesianModuleBase(ABC):
     """Abstract base class for Bayesian modules."""
 
+    # @property
+    # @abstractmethod
+    # def learn_var(self, *args, **kwargs) -> bool:
+    #     pass
+
+    @property
+    @abstractmethod
+    def module_params(self, *args, **kwargs) -> dict:
+        pass
+
     @property
     @abstractmethod
     def module(self, *args, **kwargs) -> torch.nn.Module:
+        pass
+
+    # @property
+    # @abstractmethod
+    # def moment_propagator(self, *args, **kwargs) -> MomentPropagator:
+    #     pass
+
+    @abstractmethod
+    def compute_kl_divergence(
+        self,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
         pass
 
     @abstractmethod
@@ -336,10 +371,6 @@ class BayesianModule(BayesianModuleBase, torch.nn.Module):
                 divergence for distributions not compatible with
                 torch.nn.distributions.kl_divergence()
         """
-        # Return 0.0 if no learnable parameters are in this layer.
-        if len([p for p in self.parameters()]) == 0:
-            return torch.tensor(0.0)
-
         # Reorganize priors if needed.
         if priors is None:
             priors = self.priors
