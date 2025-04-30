@@ -1,7 +1,7 @@
 """Custom types and associated functionality."""
 
 from __future__ import annotations
-from typing import Union
+from typing import Any, Callable, Union
 
 import torch
 
@@ -30,6 +30,42 @@ class MuVar:
         else:
             # Mu and var passed individually.
             self.mu_var = (mu, var)
+
+    def size(self) -> torch.Size:
+        """Return size of mu and var."""
+        return self.mu_var[0].size()
+
+    def __torch_function__(
+        self, func: Callable, types: list, args=(), kwargs=None
+    ) -> Any:
+        """General overloading function for torch functions."""
+        if kwargs is None:
+            kwargs = {}
+
+        # Ensure this is the __torch_function__ we need to call.
+        # See https://pytorch.org/docs/stable/notes/extending.html
+        if not any(issubclass(t, MuVar) for t in types):
+            return NotImplemented
+
+        # Apply `func` to mu and var.
+        if isinstance(args[0], list):
+            # This is for calls like torch.cat([a, b]) where a, b are MuVar.
+            return MuVar(
+                func([args[0][0][0], args[0][1][0]], *args[1:], **kwargs),
+                func([args[0][0][1], args[0][1][1]], *args[1:], **kwargs),
+            )
+        elif isinstance(args[1], MuVar):
+            # This is a binary operator on args[0] and args[1].
+            return MuVar(
+                func(args[0][0], args[1][0], *args[2:], **kwargs),
+                func([args[0][1], args[1][1]], *args[2:], **kwargs),
+            )
+        else:
+            # This is a unary operator on args[0].
+            return MuVar(
+                func(args[0][0], *args[1:], **kwargs),
+                func(args[0][1], *args[1:], **kwargs),
+            )
 
     def __repr__(self):
         """Custom display functionality."""
