@@ -185,8 +185,8 @@ if __name__ == "__main__":
     print(a**2)
 
     # Torch/tensor operations.
-    a = MuVar(torch.randn((2, 3)), torch.ones((2, 3)))
-    b = MuVar(torch.randn((3, 2)), 1.1 * torch.ones((3, 2)))
+    a = MuVar(torch.randn((2, 2)), torch.ones((2, 2)))
+    b = MuVar(torch.randn((2, 2)), 1.1 * torch.ones((2, 2)))
 
     print(a @ b)
     print(torch.cat([a, b], dim=-1))
