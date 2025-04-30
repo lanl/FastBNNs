@@ -123,7 +123,7 @@ class UnscentedTransform(MomentPropagator):
             var_samples = []
             for s in range(self.n_module_samples):
                 module_sample = module.module
-                samples = torch.stack([module_sample(s) for s in sigma_points])
+                samples = torch.stack([module_sample(s.clone()) for s in sigma_points])
                 mu_samples.append(torch.einsum("i,i...->...", weights, samples))
                 var_samples.append(
                     torch.einsum(
@@ -143,7 +143,7 @@ class UnscentedTransform(MomentPropagator):
             # we need to prepare the instance before running .forward() on each
             # sigma point.
             module_sample = module.module
-            samples = torch.stack([module_sample(s) for s in sigma_points])
+            samples = torch.stack([module_sample(s.clone()) for s in sigma_points])
             mu = torch.einsum("i,i...->...", weights, samples)
             var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
 
