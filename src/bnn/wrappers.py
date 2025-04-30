@@ -26,8 +26,6 @@ from utils.misc import get_torch_functional
 HAS_COMPATIBLE_FUNCTIONAL = [
     "Linear",
     "Bilinear",
-    *[f"AvgPool{n+1}d" for n in range(3)],
-    *[f"MaxPool{n+1}d" for n in range(3)],
 ]
 
 # Define layers that can be applied to input mean and variance without additional
