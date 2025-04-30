@@ -11,7 +11,7 @@ class MuVar:
 
     def __init__(
         self,
-        mu: Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]],
+        mu: Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor], MuVar],
         var: torch.Tensor = None,
     ) -> None:
         """Initialize MuVar instance.
@@ -24,6 +24,9 @@ class MuVar:
         if isinstance(mu, tuple):
             # Mean and variance passed as a tuple
             self.mu_var = mu
+        elif isinstance(mu, MuVar):
+            # Repackage for compatibility.
+            self.mu_var = mu.mu_var
         elif var is None:
             # Only mean was passed, default variance to 0.0.
             self.mu_var = (mu, torch.zeros_like(mu))
@@ -35,6 +38,7 @@ class MuVar:
         """Return size of mu and var."""
         return self.mu_var[0].size()
 
+    @classmethod
     def __torch_function__(
         self, func: Callable, types: list, args=(), kwargs=None
     ) -> Any:
@@ -48,11 +52,13 @@ class MuVar:
             return NotImplemented
 
         # Apply `func` to mu and var.
-        if isinstance(args[0], list):
+        if isinstance(args[0], (list, tuple)):
             # This is for calls like torch.cat([a, b]) where a, b are MuVar.
+            mu = [mv[0] for mv in args[0]]
+            var = [mv[1] for mv in args[0]]
             return MuVar(
-                func([args[0][0][0], args[0][1][0]], *args[1:], **kwargs),
-                func([args[0][0][1], args[0][1][1]], *args[1:], **kwargs),
+                func(mu, *args[1:], **kwargs),
+                func(var, *args[1:], **kwargs),
             )
         elif isinstance(args[1], MuVar):
             # This is a binary operator on args[0] and args[1].
@@ -115,11 +121,13 @@ class MuVar:
         elif isinstance(input, (tuple, list, MuVar)):
             # Multiplication of two random independent variables:
             #   E[XY] = E[X]E[Y]
-            #   V[XY] = (V[X] + E[X]**2)(V[Y] + E[Y]**2) - (E[X]E[Y])**2
-            mu = self.mu_var[0] * input[0]
+            #   V[XY] = (E[X]**2)*V[Y] + (E[Y]**2)*V[X] + V[X]*V[Y]
+            mu = input[0] * self.mu_var[0]
             var = (
-                (self.mu_var[0] ** 2 + self.mu_var[1]) * (input[0] ** 2 + input[1])
-            ) - (self.mu_var[0] * input[0]) ** 2
+                (input[0] ** 2) * self.mu_var[1]
+                + (self.mu_var[0] ** 2) * input[1]
+                + input[1] * self.mu_var[1]
+            )
             return MuVar(mu, var)
         else:
             raise NotImplementedError
@@ -128,25 +136,58 @@ class MuVar:
         """Custom multiply functionality for MuVar types."""
         return self.__mul__(input)
 
+    def __matmul__(self, input: Union[torch.Tensor, tuple, list, MuVar]) -> MuVar:
+        """Custom matrix multiply functionality for MuVar types."""
+        # NOTE: MuVar is NOT holding multivariate distributions.  Each scalar entry
+        # represents (mu, var) of an independent distribution, so matrix multiplication
+        # is not multiplication of multivariate random variables!
+        if isinstance(input, torch.Tensor):
+            # Multiplication by scalar: E[a@X] = a @ E[x], V[a@X]=a**2 @ V[X]
+            return MuVar(input @ self.mu_var[0], input @ self.mu_var[1] @ input.T)
+        elif isinstance(input, (tuple, list, MuVar)):
+            # Multiplication of two random independent variables:
+            #   E[X@Y] = E[X] @ E[Y]
+            #   V[X@Y] = E[X]**2 @ V[Y] + E[Y]**2 @ V[X] + V[X] @ V[Y]
+            mu = self.mu_var[0] @ input[0]
+            var = (
+                (self.mu_var[0] ** 2) @ input[1]
+                + self.mu_var[1] @ (input[0] ** 2)
+                + self.mu_var[1] @ input[1]
+            )
+            return MuVar(mu, var)
+        else:
+            raise NotImplementedError
+
+    def __rmatmul__(self, input: Union[torch.Tensor, tuple, list]) -> MuVar:
+        """Custom matrix multiply functionality for MuVar types."""
+        return self.__matmul__(input)
+
     def __pow__(self, input: int) -> MuVar:
         """Custom exponentiation functionality for MuVar types."""
         if isinstance(input, int):
-            # Extended from __mul__ for integer `input`.
-            return MuVar(
-                self.mu_var[0] ** input,
-                (self.mu_var[0] ** 2 + self.mu_var[1]) ** input
-                - self.mu_var[0] ** (2 * input),
-            )
+            mu = self.mu_var[0] ** input
+            var = ((self.mu_var[0] ** 2) + self.mu_var[1]) ** input - (
+                self.mu_var[0] ** 2
+            ) ** input
+            return MuVar(mu, var)
         else:
             raise NotImplementedError
 
 
 if __name__ == "__main__":
+    # Scalar operations.
     a = MuVar(1.0, 2.0)
     b = MuVar(1.1, 0.5)
-    print(a + b)
 
+    print(a + b)
     print(a + 1.0)
     print(1.0 + a)
-
     print(a**2)
+
+    # Torch/tensor operations.
+    a = MuVar(torch.randn((2, 3)), torch.ones((2, 3)))
+    b = MuVar(torch.randn((3, 2)), 1.1 * torch.ones((3, 2)))
+
+    print(a @ b)
+    print(torch.cat([a, b], dim=-1))
+    print(torch.nn.functional.pad(a, [0, 1, 2, 0]))
