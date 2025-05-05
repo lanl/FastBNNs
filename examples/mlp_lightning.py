@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from bnn import base, losses, priors, types
-from datasets import generic
+from datasets import polynomial
 from models import mlp
 from simulation import generators, polynomials, observation
 
@@ -46,7 +46,7 @@ noise_tform = observation.NoiseTransform(
 )
 n_data = 1024 * 10
 batch_size = 128
-dataset = generic.SimulatedData(
+dataset = polynomial.Polynomial(
     data_generator=data_generator, dataset_length=n_data, transform=noise_tform
 )
 dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
@@ -79,7 +79,7 @@ dataset.data_generator.simulator_kwargs_generator["x"] = lambda: 2.0 * (
 )
 for n in range(n_examples):
     data = dataset[n]
-    input.append(data["input"]["x"])
+    input.append(data[0])
 input = torch.stack(input, dim=0)
 output = bnn(types.MuVar(input))
 

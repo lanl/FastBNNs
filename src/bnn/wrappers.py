@@ -16,7 +16,7 @@ from bnn.inference import MomentPropagator
 from bnn.losses import kl_divergence_sampled
 from bnn.priors import Distribution
 from bnn.types import MuVar
-from utils.misc import get_torch_functional
+from utils.torch import get_torch_functional
 
 
 # List out torch.nn modules whose functionals in torch.nn.functional can directly
@@ -54,7 +54,7 @@ def select_default_propagator(module: torch.nn.Module) -> MomentPropagator:
         moment_propagator = propagator()
     elif len([p for p in module.parameters() if p.requires_grad]) == 0:
         # If this module doesn't have learnable parameters we'll
-        # default use the unscented transform.
+        # default to the unscented transform.
         moment_propagator = bnn.inference.UnscentedTransform()
     else:
         # With learnable Bayesian parameters, we'll default to
@@ -146,28 +146,32 @@ def convert_to_bnn_(
         model.set_submodule(leaf, bayesian_layer)
 
 
-class BayesianModuleBase(ABC):
+class BayesianModuleBase(ABC, torch.nn.Module):
     """Abstract base class for Bayesian modules."""
-
-    # @property
-    # @abstractmethod
-    # def learn_var(self, *args, **kwargs) -> bool:
-    #     pass
 
     @property
     @abstractmethod
-    def module_params(self, *args, **kwargs) -> dict:
+    def learn_var(self, *args, **kwargs) -> bool:
+        """Flag indicating variance of module parameters should be learnable."""
+        pass
+
+    @property
+    @abstractmethod
+    def module_params(self, *args, **kwargs) -> torch.ParameterDict:
+        """Dictionary organizing parameters of this module."""
         pass
 
     @property
     @abstractmethod
     def module(self, *args, **kwargs) -> torch.nn.Module:
+        """Return a sampled instance of this module."""
         pass
 
-    # @property
-    # @abstractmethod
-    # def moment_propagator(self, *args, **kwargs) -> MomentPropagator:
-    #     pass
+    @property
+    @abstractmethod
+    def moment_propagator(self, *args, **kwargs) -> MomentPropagator:
+        """Function used to propagate mean and variance through this module."""
+        pass
 
     @abstractmethod
     def compute_kl_divergence(
@@ -175,6 +179,7 @@ class BayesianModuleBase(ABC):
         *args,
         **kwargs,
     ) -> torch.Tensor:
+        """Method that computes the KL divergence of this module w.r.t. some prior."""
         pass
 
     @abstractmethod
@@ -184,10 +189,11 @@ class BayesianModuleBase(ABC):
         *args,
         **kwargs,
     ) -> Union[MuVar, torch.Tensor]:
+        """Method that computes a forward pass through this module."""
         pass
 
 
-class BayesianModule(BayesianModuleBase, torch.nn.Module):
+class BayesianModule(BayesianModuleBase):
     """Base class for BayesianModule modules to make PyTorch modules BNN compatible."""
 
     def __init__(
@@ -244,7 +250,7 @@ class BayesianModule(BayesianModuleBase, torch.nn.Module):
         mu = module
         module_params = [p for p in module.named_parameters()]
         _module_params = torch.nn.ParameterDict()
-        self.learn_var = learn_var
+        self._learn_var = learn_var
         if (len(module_params) > 0) and learn_var:
             # Prepare a copy of `module` to act as the unscaled st. dev. parameters.
             rho = copy.deepcopy(module)
@@ -276,7 +282,7 @@ class BayesianModule(BayesianModuleBase, torch.nn.Module):
         # Set moment propagator.
         if moment_propagator is None:
             moment_propagator = select_default_propagator(module=module)
-        self.moment_propagator = moment_propagator
+        self._moment_propagator = moment_propagator
 
         # Create samplers for each named parameter.
         if samplers_init is None:
@@ -308,6 +314,24 @@ class BayesianModule(BayesianModuleBase, torch.nn.Module):
             # Default to same distributions as `samplers_init` mean samplers.
             priors = {key: samplers_init[key + "_mean"] for key in samplers.keys()}
         self.priors = priors
+
+    @property
+    def learn_var(self) -> bool:
+        """Return property `learn_var`.
+
+        This property is written as an @property method for compatibility with the
+        abstract parent class.
+        """
+        return self._learn_var
+
+    @property
+    def moment_propagator(self) -> bool:
+        """Return property `moment_propagator`.
+
+        This property is written as an @property method for compatibility with the
+        abstract parent class.
+        """
+        return self._moment_propagator
 
     @property
     def module_params(self) -> dict:

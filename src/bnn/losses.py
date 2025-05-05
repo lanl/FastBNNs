@@ -1,5 +1,6 @@
 """Losses and helpers useful for Bayesian neural network training/evaluation."""
 
+from abc import ABC, abstractmethod
 from typing import Union
 
 import torch
@@ -68,6 +69,28 @@ class KLDivergence(_Loss):
         return torch.stack(kl).sum()
 
 
+class BNNLoss(ABC, _Loss):
+    """Abstract class for ELBO-like losses used to train Bayesian Neural Networks."""
+
+    @property
+    @abstractmethod
+    def beta(self) -> torch.FloatTensor:
+        """Scale factor for KL divergence loss term."""
+        pass
+
+    @property
+    @abstractmethod
+    def neg_log_likelihood(self) -> _Loss:
+        """_Loss to compute the negative log-likelihood term in the ELBO."""
+        pass
+
+    @property
+    @abstractmethod
+    def kl_divergence(self) -> _Loss:
+        """_Loss to compute the KL divergence of a model."""
+        pass
+
+
 class ELBO(_Loss):
     """Evidence lower bound with scaled KL."""
 
@@ -98,10 +121,37 @@ class ELBO(_Loss):
             neg_log_likelihood = torch.nn.GaussianNLLLoss(
                 full=True, reduction=reduction
             )
-        self.neg_log_likelihood = neg_log_likelihood
+        self._neg_log_likelihood = neg_log_likelihood
 
-        self.kl_divergence = kl_divergence
-        self.beta = beta
+        self._kl_divergence = kl_divergence
+        self._beta = beta
+
+    @property
+    def beta(self) -> bool:
+        """Return property `beta`.
+
+        This property is written as an @property method for compatibility with the
+        abstract parent class.
+        """
+        return self._beta
+
+    @property
+    def neg_log_likelihood(self) -> bool:
+        """Return property `neg_log_likelihood`.
+
+        This property is written as an @property method for compatibility with the
+        abstract parent class.
+        """
+        return self._neg_log_likelihood
+
+    @property
+    def kl_divergence(self) -> bool:
+        """Return property `kl_divergence`.
+
+        This property is written as an @property method for compatibility with the
+        abstract parent class.
+        """
+        return self._kl_divergence
 
     def forward(self, model: torch.nn.Module = None, **kwargs) -> torch.Tensor:
         """Compute the ELBO loss.

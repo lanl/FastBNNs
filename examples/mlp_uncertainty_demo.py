@@ -1,4 +1,4 @@
-"""Example of training a Bayesian MLP."""
+"""Demonstration of an MLP that separately predicts aleatoric and epistemic uncertainty."""
 
 import copy
 
@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from bnn import base, losses, priors, types
-from datasets import polynomial
+import datasets.polynomial
 from models import mlp
 from simulation import generators, polynomials, observation
 
@@ -18,7 +18,7 @@ out_features = 1
 hidden_features = 32
 n_hidden_layers = 1
 in_features = 1
-out_features = 1
+out_features = 2  # 1 data feature, 1 aleatoric uncertainty
 nn = mlp.MLP(
     in_features=in_features,
     out_features=out_features,
@@ -49,7 +49,7 @@ noise_tform = observation.NoiseTransform(
 )
 n_data = 1024 * 10
 batch_size = 128
-dataset = polynomial.Polynomial(
+dataset = datasets.polynomial.Polynomial(
     data_generator=data_generator, dataset_length=n_data, transform=noise_tform
 )
 dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
@@ -75,8 +75,17 @@ for epoch in range(n_epochs):
         optimizer.zero_grad()
         out = bnn(types.MuVar(batch[0].to(device)))
 
-        # Compute loss.
-        loss = loss_fn(model=bnn, input=out[0], target=batch[1].to(device), var=out[1])
+        # Compute loss: this model provides an additional output node that
+        # we'll treat as the unscaled aleatoric uncertainty (variance inherent to
+        # the data).
+        aleatoric_var = torch.nn.functional.softplus(out[0][:, 1]) ** 2
+        epistemic_var = out[1][:, 0]
+        loss = loss_fn(
+            model=bnn,
+            input=out[0][:, 0],
+            target=batch[1][:, 0].to(device),
+            var=aleatoric_var + epistemic_var,
+        )
 
         # Update model.
         loss.backward()
@@ -107,8 +116,13 @@ input = torch.stack(input, dim=0)
 output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
-y = output[0].detach().cpu().squeeze()[sort_inds]
-yerr = output[1].detach().cpu().sqrt().squeeze()[sort_inds]
+y = output[0][:, 0].detach().cpu().squeeze()[sort_inds]
+y_var_aleatoric = (
+    torch.nn.functional.softplus(output[0][:, 1]).detach().cpu().squeeze()[sort_inds]
+    ** 2
+)
+y_var_epistemic = output[1][:, 0].detach().cpu().squeeze()[sort_inds]
+yerr = (y_var_aleatoric + y_var_epistemic).sqrt()
 y_gt = data_generator.simulator(x=x, **data_generator.simulator_kwargs)
 yerr_gt = noise_tform.noise_fxn_kwargs_generator["sigma"](x)
 fig, ax = plt.subplots()
@@ -120,7 +134,7 @@ ax.fill_between(
     alpha=0.5,
     color="k",
     hatch="x",
-    label="true uncertainty",
+    label="true aleatoric uncertainty",
 )
 ax.fill_between(
     x=x,
@@ -128,7 +142,15 @@ ax.fill_between(
     y2=y + yerr,
     alpha=0.5,
     color="m",
-    label="pred. uncertainty",
+    label="predicted total uncertainty",
+)
+ax.fill_between(
+    x=x,
+    y1=y - y_var_epistemic.sqrt(),
+    y2=y + y_var_epistemic.sqrt(),
+    alpha=0.5,
+    color="r",
+    label="predicted epistemic uncertainty",
 )
 ax.plot(x, y, marker=".", linestyle="", label="predicted mean")
 ax.set_ylim((y_gt.min(), y_gt.max()))

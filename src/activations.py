@@ -35,7 +35,7 @@ class InverseTransformSampling(torch.nn.Module):
         # (-\inf, \inf) to [0, 1]
         self._alpha = torch.nn.Parameter(
             torch.tensor([0.5413]), requires_grad=learn_alpha
-        )
+        )  # self.alpha=softplus(self._alpha)
         self.domain_tform = scaled_sigmoid
 
         # Define the Normal distribution of interest.

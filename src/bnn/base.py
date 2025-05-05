@@ -6,6 +6,7 @@ from typing import Any, Iterator, Union
 import lightning as L
 import torch
 
+from bnn.losses import BNNLoss
 from bnn.types import MuVar
 from bnn.wrappers import convert_to_bnn_
 
@@ -58,7 +59,7 @@ class BNN(torch.nn.Module):
 class BNNLightning(L.LightningModule):
     """PyTorch Lightning wrapper for BNN class."""
 
-    def __init__(self, bnn: BNN, loss: torch.nn.Module, *args, **kwargs):
+    def __init__(self, bnn: BNN, loss: BNNLoss, *args, **kwargs):
         """Initialize Lightning wrapper..
 
         Args:
@@ -81,12 +82,10 @@ class BNNLightning(L.LightningModule):
     def training_step(self, batch, batch_idx):
         """Training step for a single batch."""
         # Compute forward pass through model.
-        out = self.bnn(MuVar(batch["input"]["x"]))
+        out = self.bnn(MuVar(batch[0]))
 
         # Compute loss.
-        loss = self.loss(
-            model=self.bnn, input=out[0], target=batch["output"], var=out[1]
-        )
+        loss = self.loss(model=self.bnn, input=out[0], target=batch[1], var=out[1])
 
         # Log results.
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
@@ -96,12 +95,10 @@ class BNNLightning(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         """Validation step for a single batch."""
         # Compute forward pass through model.
-        out = self.bnn(MuVar(batch["input"]["x"]))
+        out = self.bnn(MuVar(batch[0]))
 
         # Compute loss.
-        loss = self.loss(
-            model=self.bnn, input=out[0], target=batch["output"], var=out[1]
-        )
+        loss = self.loss(model=self.bnn, input=out[0], target=batch[1], var=out[1])
 
         # Log results.
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
