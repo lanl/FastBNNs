@@ -16,7 +16,7 @@ from bnn.inference import MomentPropagator
 from bnn.losses import kl_divergence_sampled
 from bnn.priors import Distribution
 from bnn.types import MuVar
-from utils.torch import get_torch_functional
+from utils.torch_utils import get_torch_functional
 
 
 # List out torch.nn modules whose functionals in torch.nn.functional can directly
@@ -46,13 +46,24 @@ PASSTHROUGH = [
 current_module = sys.modules[__name__]
 
 
-def select_default_propagator(module: torch.nn.Module) -> MomentPropagator:
-    """Select a compatible moment propagator for `module`"""
+def select_default_propagator(
+    module: torch.nn.Module, is_bayesian: bool = True
+) -> MomentPropagator:
+    """Select a compatible moment propagator for `module`.
+
+    Args:
+        module: Module that we'll choose a propagator for.
+        is_bayesian: Flag indicating parameters of `module` will be treated
+            as distributions.
+    """
     if hasattr(bnn.inference, module.__class__.__name__):
         # A custom propagator exists for this module so we'll use that.
         propagator = getattr(bnn.inference, module.__class__.__name__)
         moment_propagator = propagator()
-    elif len([p for p in module.parameters() if p.requires_grad]) == 0:
+    # elif not is_bayesian or (
+    elif not is_bayesian or (
+        len([p for p in module.parameters() if p.requires_grad]) == 0
+    ):
         # If this module doesn't have learnable parameters we'll
         # default to the unscented transform.
         moment_propagator = bnn.inference.UnscentedTransform()
@@ -115,6 +126,7 @@ def convert_to_bnn_(
 
     # Replace leaf modules with Bayesian counterparts or compatible passthroughs.
     for leaf in leaf_names:
+        # module = get_submodule_custom(model=model, target=leaf)
         module = model.get_submodule(leaf)
         module_name = module.__class__.__name__
 
@@ -281,7 +293,9 @@ class BayesianModule(BayesianModuleBase):
         # Validate and set moment propagator.
         # Set moment propagator.
         if moment_propagator is None:
-            moment_propagator = select_default_propagator(module=module)
+            moment_propagator = select_default_propagator(
+                module=module, is_bayesian=learn_var
+            )
         self._moment_propagator = moment_propagator
 
         # Create samplers for each named parameter.
