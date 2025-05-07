@@ -5,13 +5,54 @@ from typing import Any, Callable, Union
 
 import torch
 
+# List torch functions that we can apply independently to mean and variance.
+SIMPLE_TORCH_FUNCS = [
+    torch.cat,
+    torch.chunk,
+    torch.dsplit,
+    torch.column_stack,
+    torch.dstack,
+    torch.gather,
+    torch.hsplit,
+    torch.hstack,
+    torch.index_select,
+    torch.masked_select,
+    torch.movedim,
+    torch.permute,
+    torch.reshape,
+    torch.select,
+    torch.split,
+    torch.stack,
+    torch.take_along_dim,
+    torch.tensor_split,
+    torch.tile,
+    torch.transpose,
+    torch.unbind,
+    torch.unravel_index,
+    torch.unsqueeze,
+    torch.vsplit,
+    torch.vstack,
+    torch.where,
+    torch.nn.functional.pad,
+    torch.nn.functional.interpolate,
+    torch.nn.functional.upsample,
+    torch.nn.functional.upsample_nearest,
+    torch.nn.functional.upsample_bilinear,
+    torch.nn.functional.grid_sample,
+    torch.nn.functional.affine_grid,
+]
+
 
 class MuVar:
     """Custom tuple-like object holding mean and variance of some distribution."""
 
     def __init__(
         self,
-        mu: Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor], MuVar],
+        mu: Union[
+            torch.Tensor,
+            Union[list[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]],
+            MuVar,
+        ],
         var: torch.Tensor = None,
     ) -> None:
         """Initialize MuVar instance.
@@ -21,7 +62,7 @@ class MuVar:
                 both mean and variance (to allow calling this method on a tuple
                 without unpacking arguments).
         """
-        if isinstance(mu, tuple):
+        if isinstance(mu, (list, tuple)):
             # Mean and variance passed as a tuple
             self.mu_var = mu
         elif isinstance(mu, MuVar):
@@ -34,13 +75,9 @@ class MuVar:
             # Mu and var passed individually.
             self.mu_var = (mu, var)
 
-    def size(self) -> torch.Size:
-        """Return size of mu and var."""
-        return self.mu_var[0].size()
-
     @classmethod
     def __torch_function__(
-        self, func: Callable, types: list, args=(), kwargs=None
+        self, func: Callable, types: list, args: tuple = (), kwargs: dict = None
     ) -> Any:
         """General overloading function for torch functions."""
         if kwargs is None:
@@ -51,31 +88,58 @@ class MuVar:
         if not any(issubclass(t, MuVar) for t in types):
             return NotImplemented
 
-        # Apply `func` to mu and var.
-        if isinstance(args[0], (list, tuple)):
-            # This is for calls like torch.cat([a, b]) where a, b are MuVar.
-            mu = [mv[0] for mv in args[0]]
-            var = [mv[1] for mv in args[0]]
-            return MuVar(
-                func(mu, *args[1:], **kwargs),
-                func(var, *args[1:], **kwargs),
-            )
-        elif isinstance(args[1], MuVar):
-            # This is a binary operator on args[0] and args[1].
-            return MuVar(
-                func(args[0][0], args[1][0], *args[2:], **kwargs),
-                func([args[0][1], args[1][1]], *args[2:], **kwargs),
-            )
+        # For "simple" functions like torch.cat, we'll route mu and var separately
+        # through the function.  Otherwise, we don't want to use these
+        # __torch_function__ implementations.
+        if func in SIMPLE_TORCH_FUNCS:
+
+            def split_muvar(args: Union[list, tuple]) -> Union[list, tuple]:
+                """Recursively split MuVar instances into separate lists of mu and lists of var."""
+                if isinstance(args, Union[list, tuple]):
+                    # Loop through arguments and split.
+                    args_mu = []
+                    args_var = []
+                    for arg in args:
+                        if isinstance(arg, MuVar):
+                            # Split into mu and var.
+                            args_mu.append(arg[0])
+                            args_var.append(arg[1])
+                        elif isinstance(arg, (list, tuple)):
+                            # Split MuVar items if needed.
+                            splits = split_muvar(arg)
+                            args_mu.append(splits[0])
+                            args_var.append(splits[1])
+                        else:
+                            # Append to both argument lists.
+                            args_mu.append(arg)
+                            args_var.append(arg)
+                    return args_mu, args_var
+                else:
+                    # This is for, e.g., scalar arguments.
+                    return args, args
+
+            # Separate MuVar types into mu and var for split calls to `func`.
+            args_mu, args_var = split_muvar(args)
+            kwargs_mu = {}
+            kwargs_var = {}
+            for k, v in kwargs.items():
+                kwargs_mu[k], kwargs_var[k] = split_muvar(v)
+            return MuVar(func(*args_mu, **kwargs_mu), func(*args_var, **kwargs_var))
         else:
-            # This is a unary operator on args[0].
-            return MuVar(
-                func(args[0][0], *args[1:], **kwargs),
-                func(args[0][1], *args[1:], **kwargs),
-            )
+            # Return NotImplemented to allow other overrides to be used.
+            return NotImplemented
 
     def __repr__(self):
         """Custom display functionality."""
         return f"MuVar({self.mu_var})"
+
+    def __getattr__(self, name: str) -> Any:
+        """Custom getattr to fall back on attributes of self.mu_var[0]."""
+        mu = self.mu_var[0]
+        if hasattr(mu, name):
+            return getattr(mu, name)
+
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
     def __getitem__(self, idx: int) -> torch.Tensor:
         """Access requested index of self.mu_var"""
@@ -184,10 +248,13 @@ if __name__ == "__main__":
     print(1.0 + a)
     print(a**2)
 
-    # Torch/tensor operations.
+    # Torch/tensor operations and attributes.
     a = MuVar(torch.randn((2, 2)), torch.ones((2, 2)))
     b = MuVar(torch.randn((2, 2)), 1.1 * torch.ones((2, 2)))
 
+    print(a.shape)
+    print(a.size(1))
+    print(a.numel())
     print(a @ b)
     print(torch.cat([a, b], dim=-1))
     print(torch.nn.functional.pad(a, [0, 1, 2, 0]))

@@ -6,14 +6,12 @@ getattr(inference, layer.__class__.__name__) will return the custom propagator
 for that layer if available.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import functools
 from typing import List, Optional, Union
 
 import torch
 import torch.distributions as dist
-
-from bnn.types import MuVar
 
 
 def select_default_sigmas(
@@ -108,10 +106,10 @@ class UnscentedTransform(MomentPropagator):
 
     def forward(
         self,
-        module: torch.nn.Module,
-        input: MuVar,
+        module: Callable,
+        input: Iterable,
         return_samples: bool = False,
-    ) -> Union[MuVar, tuple]:
+    ) -> Union[Iterable, tuple]:
         """Propagate moments using the unscented transform."""
         # Select sigma points.
         sigma_points, weights = self.sigma_selector(mu=input[0], var=input[1])
@@ -154,9 +152,9 @@ class UnscentedTransform(MomentPropagator):
             var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
 
         if return_samples:
-            return MuVar(mu, var), samples
+            return type(input)([mu, var]), samples
         else:
-            return MuVar(mu, var)
+            return type(input)([mu, var])
 
 
 class MonteCarlo(MomentPropagator):
@@ -187,10 +185,10 @@ class MonteCarlo(MomentPropagator):
 
     def forward(
         self,
-        module: torch.nn.Module,
-        input: MuVar,
+        module: Callable,
+        input: Iterable,
         return_samples: bool = False,
-    ) -> Union[MuVar, tuple]:
+    ) -> Union[Iterable, tuple]:
         """Propagate moments by averaging over n_samples forward passes of module."""
         # If the input variance is greater than zero, we'll need to sample the
         # input as well.
@@ -203,9 +201,9 @@ class MonteCarlo(MomentPropagator):
             samples = torch.stack([module(input[0]) for _ in range(self.n_samples)])
 
         if return_samples:
-            return MuVar(samples.mean(dim=0), samples.var(dim=0)), samples
+            return type(input)([samples.mean(dim=0), samples.var(dim=0)]), samples
         else:
-            return MuVar(samples.mean(dim=0), samples.var(dim=0))
+            return type(input)([samples.mean(dim=0), samples.var(dim=0)])
 
 
 class Linear(MomentPropagator):
@@ -219,8 +217,8 @@ class Linear(MomentPropagator):
     def forward(
         self,
         module: torch.nn.Module,
-        input: MuVar,
-    ) -> MuVar:
+        input: Iterable,
+    ) -> Iterable:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
@@ -260,7 +258,7 @@ class Linear(MomentPropagator):
             bias=None,
         )
 
-        return MuVar(mu, var)
+        return type(input)([mu, var])
 
 
 class ConvNd(MomentPropagator):
@@ -273,8 +271,8 @@ class ConvNd(MomentPropagator):
     def forward(
         self,
         module: torch.nn.Module,
-        input: MuVar,
-    ) -> MuVar:
+        input: Iterable,
+    ) -> Iterable:
         """Analytical moment propagation through layer."""
         # Modify input and prepare functional arguments.
         if module.mu.padding_mode != "zeros":
@@ -338,7 +336,7 @@ class ConvNd(MomentPropagator):
             **functional_kwargs,
         )
 
-        return MuVar(mu, var)
+        return type(input)([mu, var])
 
 
 class Conv1d(ConvNd):
@@ -390,9 +388,9 @@ class ConvTransposeNd(MomentPropagator):
     def forward(
         self,
         module: torch.nn.Module,
-        input: MuVar,
+        input: Iterable,
         output_size: Optional[List[int]] = None,
-    ) -> MuVar:
+    ) -> Iterable:
         """Analytical moment propagation through layer."""
         # Prepare functional arguments.
         output_padding = module.mu._output_padding(
@@ -452,7 +450,7 @@ class ConvTransposeNd(MomentPropagator):
             **functional_kwargs,
         )
 
-        return MuVar(mu, var)
+        return type(input)([mu, var])
 
 
 class ConvTranspose1d(ConvTransposeNd):
@@ -497,7 +495,7 @@ if __name__ == "__main__":
     ut = UnscentedTransform()
 
     # Propagate example data through layer.
-    input = MuVar(torch.tensor([1.23])[None, :], torch.tensor([3.21])[None, :])
+    input = (torch.tensor([1.23])[None, :], torch.tensor([3.21])[None, :])
     out_mc, samples_mc = mc(module=layer, input=input, return_samples=True)
     out_ut, samples_ut = ut(module=layer, input=input, return_samples=True)
 
