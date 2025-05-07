@@ -5,7 +5,7 @@ import copy
 import functools
 import re
 import sys
-from typing import Union
+from typing import Any, Union
 
 import numpy as np
 import torch
@@ -316,12 +316,12 @@ class BayesianModule(BayesianModuleBase):
         self.samplers_init = samplers_init
         self.reset_parameters()
 
-        # Initialize variational distribution samplers.
+        # Define variational distribution sampler types.
         scale_tform = torch.nn.functional.softplus
         self.scale_tform = scale_tform
         if samplers is None:
             samplers = {key: dist.Normal for key, _ in module.named_parameters()}
-        self.samplers = samplers
+        self._samplers = samplers
 
         # Set priors.
         if priors is None:
@@ -347,20 +347,24 @@ class BayesianModule(BayesianModuleBase):
         """
         return self._moment_propagator
 
+    def get_named_sampler(self, name: str) -> torch.distributions.Distribution:
+        """Initialize and return the requested module parameter sampler."""
+        return self._samplers[name](
+            loc=self._module_params[name + "_mean"],
+            scale=self.scale_tform(self._module_params[name + "_rho"]),
+        )
+
+    @property
+    def samplers(self) -> dict:
+        """Return initialized variational distribution samplers."""
+        # Initialize the samplers on the fly to ensure we're on the same device
+        # as self._module_params.
+        return {key: self.get_named_sampler(name=key) for key in self._samplers.keys()}
+
     @property
     def module_params(self) -> dict:
         """Return a sample of this module's parameters."""
-        # Initialize the samplers on the fly to ensure we're on the same device
-        # as self._module_params.
-        samplers = {
-            key: val(
-                loc=self._module_params[key + "_mean"],
-                scale=self.scale_tform(self._module_params[key + "_rho"]),
-            )
-            for key, val in self.samplers.items()
-        }
-
-        return {key: val.sample() for key, val in samplers.items()}
+        return {key: val.sample() for key, val in self.samplers.items()}
 
     @property
     def module(self) -> torch.nn.Module:
@@ -386,11 +390,34 @@ class BayesianModule(BayesianModuleBase):
             # Return the functional with sampled parameters pre-populated.
             return functools.partial(self._functional, **self.module_params)
 
+    def __getattr__(self, name: str) -> Any:
+        """Custom getattr to return samples of named parameters."""
+        # Check for a sampler associated with `name` and return a sample if it exists.
+        inst_modules = self.__dict__.get("_modules", {})
+        if f"{name}_mean" in inst_modules.get("_module_params", {}).keys():
+            return self.get_named_sampler(name=name).sample()
+
+        # Check remaining modules and parameters for requested attribue.
+        inst_params = self.__dict__.get("_parameters", {})
+        if name in inst_modules.keys():
+            return inst_modules[name]
+        elif name in inst_params.keys():
+            return inst_params[name]
+
+        # Raise attribue error if we reach this point.
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""
         for key, param in self._module_params.items():
             if param is not None:
                 param.data = self.samplers_init[key].sample(sample_shape=param.shape)
+
+    def laplace_approx_init(self) -> None:
+        # TODO: Add parameter initialization from Laplace approximation.
+        raise NotImplementedError
 
     def compute_kl_divergence(
         self, priors: Union[dict, Distribution] = None, n_samples: int = 1
@@ -411,7 +438,7 @@ class BayesianModule(BayesianModuleBase):
         if priors is None:
             priors = self.priors
         elif not isinstance(priors, dict):
-            priors = {key: priors for key in self.samplers.keys()}
+            priors = {key: priors for key in self._samplers.keys()}
 
         # Loop over parameters and compute KL contribution.
         kl_divergence = []
@@ -423,12 +450,7 @@ class BayesianModule(BayesianModuleBase):
                 # clause below.
                 kl_divergence.append(
                     dist.kl_divergence(
-                        self.samplers[param_name](
-                            loc=self._module_params[param_name + "_mean"],
-                            scale=self.scale_tform(
-                                self._module_params[param_name + "_rho"]
-                            ),
-                        ),
+                        self.get_named_sampler(name=param_name),
                         param_prior.distribution,
                     ).sum()
                 )
@@ -436,12 +458,7 @@ class BayesianModule(BayesianModuleBase):
                 # Compute Monte Carlo KL divergence.
                 kl_divergence.append(
                     kl_divergence_sampled(
-                        dist0=self.samplers[param_name](
-                            loc=self._module_params[param_name + "_mean"],
-                            scale=self.scale_tform(
-                                self._module_params[param_name + "_rho"]
-                            ),
-                        ),
+                        dist0=self.get_named_sampler(name=param_name),
                         dist1=param_prior.distribution,
                         n_samples=n_samples,
                     ).sum()
