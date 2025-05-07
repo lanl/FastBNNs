@@ -43,7 +43,7 @@ PASSTHROUGH = [
 ]
 
 
-current_module = sys.modules[__name__]
+CURRENT_MODULE = sys.modules[__name__]
 
 
 def select_default_propagator(
@@ -146,9 +146,9 @@ def convert_to_bnn_(
             # This module can be broadcast along (mu, var) without additional
             # processing (e.g., a flatten layer, which only changes shapes).
             bayesian_layer = PassthroughModule(module=module, **module_kwargs)
-        elif hasattr(current_module, module_name):
+        elif hasattr(CURRENT_MODULE, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
-            bayesian_layer = getattr(current_module, module_name)(
+            bayesian_layer = getattr(CURRENT_MODULE, module_name)(
                 module=module, **module_kwargs
             )
         else:
