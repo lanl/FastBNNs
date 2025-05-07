@@ -18,6 +18,7 @@ class InverseTransformSampling(torch.nn.Module):
         self,
         distribution: Distribution = torch.distributions.Normal(loc=0.0, scale=1.0),
         learn_alpha: bool = False,
+        eps: float = 1.0e-6,
         *args,
         **kwargs
     ) -> None:
@@ -28,6 +29,7 @@ class InverseTransformSampling(torch.nn.Module):
             learn_alpha: Flag indicating we should learn the alpha scale in
                 the domain transform f(x) = 1.0 / (1.0 + exp(-alpha*x)),
                 otherwise alpha=1.0 will always be used.
+            eps: Clamp inputs to distribution.icdf to [eps, 1.0-eps]
         """
         super().__init__(*args, **kwargs)
 
@@ -40,6 +42,7 @@ class InverseTransformSampling(torch.nn.Module):
 
         # Define the Normal distribution of interest.
         self.distribution = distribution
+        self.eps = eps
 
     @property
     def alpha(self) -> torch.Tensor:
@@ -48,9 +51,10 @@ class InverseTransformSampling(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through activation."""
-        # Transform inputs from (-\inf, \inf) to [0, 1]
+        # Transform inputs from (-\inf, \inf) to [eps, 1.0-eps]
         x_prime = self.domain_tform(x, alpha=self.alpha)
+        x_prime.clamp_(min=self.eps, max=1.0 - self.eps)
 
         # Treat transformed inputs as samples from U[0, 1] and pass through
-        # inverse CDF of Normal.
+        # inverse CDF of self.disribution.
         return self.distribution.icdf(x_prime)
