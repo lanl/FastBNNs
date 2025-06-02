@@ -28,7 +28,7 @@ class BNN(torch.nn.Module):
             (2): The forward pass of `nn` is assumed to accept a single tensor
                 representing the input.  The conversion to a BNN will hijack
                 the forward pass through `nn` by changing the type of this
-                input tensor.
+                input tensor to bnn.types.MuVar.
 
         Args:
             nn: Neural network to be converted to a Bayesian neural network.
