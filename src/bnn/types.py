@@ -5,6 +5,7 @@ from typing import Any, Callable, Union
 
 import torch
 
+
 # List torch functions that we can apply independently to mean and variance.
 SIMPLE_TORCH_FUNCS = [
     torch.cat,
@@ -29,6 +30,7 @@ SIMPLE_TORCH_FUNCS = [
     torch.transpose,
     torch.unbind,
     torch.unravel_index,
+    torch.squeeze,
     torch.unsqueeze,
     torch.vsplit,
     torch.vstack,
@@ -236,6 +238,10 @@ class MuVar:
             return MuVar(mu, var)
         else:
             raise NotImplementedError
+
+    def apply(self, func: Callable, *args, **kwargs) -> MuVar:
+        """Generic apply() for callables that act separately on mu and var."""
+        return MuVar(tuple(func(t, *args, **kwargs) for t in self.mu_var))
 
 
 if __name__ == "__main__":
