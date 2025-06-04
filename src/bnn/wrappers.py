@@ -126,7 +126,6 @@ def convert_to_bnn_(
 
     # Replace leaf modules with Bayesian counterparts or compatible passthroughs.
     for leaf in leaf_names:
-        # module = get_submodule_custom(model=model, target=leaf)
         module = model.get_submodule(leaf)
         module_name = module.__class__.__name__
 
@@ -158,8 +157,52 @@ def convert_to_bnn_(
         model.set_submodule(leaf, bayesian_layer)
 
 
+def convert_to_nn(
+    bnn: torch.nn.Module,
+) -> None:
+    """Inverse of convert_to_bnn_ to convert a BNN back to a standard NN
+
+    Args:
+        model: Bayesian NN to be converted back to a standard NN.
+    """
+    # Search for modules of `model` to convert, removing stem modules from the
+    # list (we just want the leaf modules that contain parameters).
+    model = copy.deepcopy(bnn)
+    module_names = [n for n, _ in model.named_modules()]
+    leaf_names = isolate_leaf_module_names(module_names)
+
+    # Remove BNN-specific modules from list.
+    bnn_module_names = ["_module_params", "_moment_propagator"]
+    leaf_names = [
+        leaf for leaf in leaf_names if not any([bn in leaf for bn in bnn_module_names])
+    ]
+
+    # Replace Bayesian leaf modules with standard counterparts.
+    for leaf in leaf_names:
+        # If `leaf` is a named `mu` parameter, we'll reset the module to the `mu` leaf.
+        # If the module is a PassthroughModule, we'll remove the passthrough wrapper.
+        module = model.get_submodule(leaf)
+        leaf_split = leaf.split(".")
+        if leaf_split[-1] == "mu":
+            model.set_submodule(".".join(leaf_split[:-1]), module)
+        elif isinstance(module, PassthroughModule):
+            model.set_submodule(leaf, module.module)
+
+    return model
+
+
 class BayesianModuleBase(ABC, torch.nn.Module):
     """Abstract base class for Bayesian modules."""
+
+    # Define a scale transform to transform learnable `rho` parameters to scale
+    # parameters (e.g., sigma = torch.nn.functional.softplus(rho)) where `rho` is
+    # learned and `sigma` is the standard deviation of the Gaussian defining
+    # a module's parameters.
+    scale_tform = torch.nn.functional.softplus
+
+    def scale_tform_inv(x: torch.Tensor) -> torch.Tensor:
+        # Inverse of self.scale_tform.
+        return torch.log(torch.exp(x) - 1.0)
 
     @property
     @abstractmethod
@@ -177,6 +220,12 @@ class BayesianModuleBase(ABC, torch.nn.Module):
     @abstractmethod
     def module(self, *args, **kwargs) -> torch.nn.Module:
         """Return a sampled instance of this module."""
+        pass
+
+    @property
+    @abstractmethod
+    def module_map(self, *args, **kwargs) -> torch.nn.Module:
+        """Return a non-Bayesian instance of self with parameters set to learned means."""
         pass
 
     @property
@@ -284,7 +333,7 @@ class BayesianModule(BayesianModuleBase):
 
         # Store a functional version of this module if possible (some modules
         # won't have a functional, or their action can't be directly replicated
-        # through the functional).
+        # through the functional without additional processing).
         if module.__class__.__name__ in HAS_COMPATIBLE_FUNCTIONAL:
             self._functional = get_torch_functional(module.__class__)
         else:
@@ -317,8 +366,6 @@ class BayesianModule(BayesianModuleBase):
         self.reset_parameters()
 
         # Define variational distribution sampler types.
-        scale_tform = torch.nn.functional.softplus
-        self.scale_tform = scale_tform
         if samplers is None:
             samplers = {key: dist.Normal for key, _ in module.named_parameters()}
         self._samplers = samplers
@@ -360,6 +407,11 @@ class BayesianModule(BayesianModuleBase):
         # Initialize the samplers on the fly to ensure we're on the same device
         # as self._module_params.
         return {key: self.get_named_sampler(name=key) for key in self._samplers.keys()}
+
+    @property
+    def module_map(self) -> torch.nn.Module:
+        """Return module instance with parameters set to learned means."""
+        return self.mu
 
     @property
     def module_params(self) -> dict:
