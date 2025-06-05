@@ -1,7 +1,8 @@
 """Bayesian neural network base module(s) and utilities."""
 
 import copy
-from typing import Any, Iterator, Union
+from functools import partial
+from typing import Any, Callable, Iterator, Union
 
 import laplace
 import lightning as L
@@ -80,7 +81,7 @@ class BNN(torch.nn.Module):
             )
             param_dict[base_name + "_mean"] = la.params[n]
             param_dict[base_name + "_rho"] = inv_scale_tform(
-                la.posterior_variance[var_ind : (var_ind + la.params[n].numel())].sqrt()
+                la.posterior_scale[var_ind : (var_ind + la.params[n].numel())]
             ).reshape(la.params[n].shape)
             var_ind += la.params[n].numel()
 
@@ -95,25 +96,32 @@ class BNN(torch.nn.Module):
 class BNNLightning(L.LightningModule):
     """PyTorch Lightning wrapper for BNN class."""
 
-    def __init__(self, bnn: BNN, loss: BNNLoss, *args, **kwargs):
+    def __init__(
+        self,
+        bnn: BNN,
+        loss: BNNLoss,
+        optimizer: Callable = partial(torch.optim.AdamW, lr=1.0e-3),
+    ) -> None:
         """Initialize Lightning wrapper..
 
         Args:
             bnn: Bayesian neural network to wrap in Lightning.
             loss: Loss function to call in training/validation.
+            optimizer: Partially initialized optimizer that will be given parameters
+                to optimize in self.configure_optimizers().
         """
         super().__init__()
 
         self.bnn = bnn
         self.loss = loss
+        self.optimizer_fxn = optimizer
 
     def forward(self, *args, **kwargs) -> Any:
         """Forward pass through BNN."""
         return self.bnn(*args, **kwargs)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=1.0e-3)
-        return optimizer
+        return self.optimizer_fxn(self.parameters())
 
     def training_step(self, batch, batch_idx):
         """Training step for a single batch."""
