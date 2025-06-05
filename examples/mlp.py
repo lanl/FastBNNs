@@ -13,7 +13,7 @@ from simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.
-in_features = 1
+n_features = 1
 out_features = 1
 hidden_features = 32
 n_hidden_layers = 1
@@ -26,7 +26,7 @@ nn = mlp.MLP(
     hidden_features=hidden_features,
     activation=torch.nn.LeakyReLU,
 )
-bnn = base.BNN(nn=nn)
+bnn = base.BNN(nn=nn, convert_in_place=False)
 device = torch.device("cuda")
 bnn = bnn.to(device)
 
@@ -62,7 +62,7 @@ loss_fn = losses.ELBO(
     beta=1.0 / n_batches,  # see Graves 2011
 )
 n_epochs = 100
-optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-3)
+optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-2)
 
 # Train.
 loss_train = []
