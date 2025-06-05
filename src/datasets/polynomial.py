@@ -1,6 +1,7 @@
 """Dataset for simulated polynomial data."""
 
 from collections.abc import Callable
+from typing import Optional
 
 import torch
 
@@ -12,7 +13,7 @@ class Polynomial(torch.utils.data.Dataset):
         self,
         data_generator: Callable,
         dataset_length: int = 1,
-        transform: torch.nn.Module = None,
+        transform: Optional[torch.nn.Module] = None,
     ) -> None:
         """Initializer for stochastic simulator dataset.
 

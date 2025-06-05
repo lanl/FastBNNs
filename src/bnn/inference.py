@@ -63,7 +63,7 @@ class MomentPropagator(torch.nn.Module):
         self,
         module: torch.nn.Module,
         input_mu: Union[tuple, torch.Tensor],
-        input_var: torch.Tensor = None,
+        input_var: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward method for MomentPropagator modules.
 
@@ -83,7 +83,9 @@ class UnscentedTransform(MomentPropagator):
     through a deterministic layer.
     """
 
-    def __init__(self, sigma_selector: Callable = None, n_module_samples: int = 1):
+    def __init__(
+        self, sigma_selector: Optional[Callable] = None, n_module_samples: int = 1
+    ):
         """Initializer for UnscentedTransform inference module.
 
         Args:

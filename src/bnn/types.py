@@ -1,7 +1,7 @@
 """Custom types and associated functionality."""
 
 from __future__ import annotations
-from typing import Any, Callable, Union
+from typing import Any, Callable, Optional, Union
 
 import torch
 
@@ -55,7 +55,7 @@ class MuVar:
             Union[list[torch.Tensor, torch.Tensor], tuple[torch.Tensor, torch.Tensor]],
             MuVar,
         ],
-        var: torch.Tensor = None,
+        var: Optional[torch.Tensor] = None,
     ) -> None:
         """Initialize MuVar instance.
 
@@ -79,11 +79,9 @@ class MuVar:
 
     @classmethod
     def __torch_function__(
-        self, func: Callable, types: list, args: tuple = (), kwargs: dict = None
+        self, func: Callable, types: list, args: Any = (), kwargs: dict = {}
     ) -> Any:
         """General overloading function for torch functions."""
-        if kwargs is None:
-            kwargs = {}
 
         # Ensure this is the __torch_function__ we need to call.
         # See https://pytorch.org/docs/stable/notes/extending.html

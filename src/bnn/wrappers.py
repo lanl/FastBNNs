@@ -5,7 +5,7 @@ import copy
 import functools
 import re
 import sys
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import torch
@@ -260,10 +260,10 @@ class BayesianModule(BayesianModuleBase):
     def __init__(
         self,
         module: torch.nn.Module,
-        samplers: dict = None,
-        samplers_init: dict = None,
-        priors: dict = None,
-        moment_propagator: MomentPropagator = None,
+        samplers: Optional[dict] = None,
+        samplers_init: Optional[dict] = None,
+        priors: Optional[dict] = None,
+        moment_propagator: Optional[MomentPropagator] = None,
         learn_var: bool = True,
         *args,
         **kwargs,
@@ -472,7 +472,7 @@ class BayesianModule(BayesianModuleBase):
         raise NotImplementedError
 
     def compute_kl_divergence(
-        self, priors: Union[dict, Distribution] = None, n_samples: int = 1
+        self, priors: Optional[Union[dict, Distribution]] = None, n_samples: int = 1
     ) -> torch.Tensor:
         """Compute the KL divergence between self.prior and module parameters.
 

@@ -1,7 +1,7 @@
 """Losses and helpers useful for Bayesian neural network training/evaluation."""
 
 from abc import ABC, abstractmethod
-from typing import Union
+from typing import Optional, Union
 
 import torch
 import torch.distributions as dist
@@ -25,7 +25,7 @@ def kl_divergence_sampled(
 class KLDivergence(_Loss):
     """KL divergence loss for Bayesian neural networks."""
 
-    def __init__(self, prior: Union[dict, priors.Distribution] = None):
+    def __init__(self, prior: Optional[Union[dict, priors.Distribution]] = None):
         """Initialize KL divergence loss.
         Args:
             prior: Prior distribution over parameters.  This can be a single
@@ -96,7 +96,7 @@ class ELBO(_Loss):
 
     def __init__(
         self,
-        neg_log_likelihood: _Loss = None,
+        neg_log_likelihood: Optional[_Loss] = None,
         kl_divergence: _Loss = KLDivergence(),
         beta: float = 1.0,
         reduction: str = "sum",
@@ -153,7 +153,9 @@ class ELBO(_Loss):
         """
         return self._kl_divergence
 
-    def forward(self, model: torch.nn.Module = None, **kwargs) -> torch.Tensor:
+    def forward(
+        self, model: Optional[torch.nn.Module] = None, **kwargs
+    ) -> torch.Tensor:
         """Compute the ELBO loss.
 
         Args:

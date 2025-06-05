@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 import copy
+from typing import Any, Optional
 
 import torch
 import torch.distributions as dist
@@ -10,7 +11,12 @@ import torch.distributions as dist
 class Distribution(torch.nn.Module):
     """Distribution wrapper to facilitate device transfers."""
 
-    def __init__(self, distribution: dist.Distribution = None, *args, **kwargs):
+    def __init__(
+        self,
+        distribution: Optional[dist.Distribution] = None,
+        *args: Any,
+        **kwargs: Any
+    ):
         """Initialize wrapper."""
         super().__init__()
 
