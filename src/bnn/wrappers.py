@@ -467,10 +467,6 @@ class BayesianModule(BayesianModuleBase):
             if param is not None:
                 param.data = self.samplers_init[key].sample(sample_shape=param.shape)
 
-    def laplace_approx_init(self) -> None:
-        # TODO: Add parameter initialization from Laplace approximation.
-        raise NotImplementedError
-
     def compute_kl_divergence(
         self, priors: Optional[Union[dict, Distribution]] = None, n_samples: int = 1
     ) -> torch.Tensor:
