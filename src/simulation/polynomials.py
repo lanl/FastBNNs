@@ -7,18 +7,15 @@ import torch
 
 
 def polynomial(
-    x: Union[float, torch.Tensor], order: int = 1, coefficients: Iterable = [0.0, 1.0]
+    x: Union[float, torch.Tensor], coefficients: Iterable = [0.0, 1.0]
 ) -> Union[float, torch.Tensor]:
     """Basic polynomial.
 
     Args:
         x: Points at which to evaluate the polynomial.
-        order: Order of the polynomial.
         coefficients: Polynomial coefficients in ascending order.
     """
-    return torch.stack(
-        [c * (x**n) for c, n in zip(coefficients, range(order + 1))]
-    ).sum(dim=0)
+    return torch.stack([c * (x**n) for n, c in enumerate(coefficients)]).sum(dim=0)
 
 
 if __name__ == "__main__":

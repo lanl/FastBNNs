@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from analysis import statistics
 from bnn import base, losses, priors, types
 from datasets import polynomial
 from models import mlp
@@ -13,8 +14,6 @@ from simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.
-n_features = 1
-out_features = 1
 hidden_features = 32
 n_hidden_layers = 1
 in_features = 1
@@ -32,13 +31,13 @@ bnn = bnn.to(device)
 
 # Define a prior (this one applies to all parameters in the model).
 prior = priors.Distribution(
-    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
+    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([0.5]))
 ).to(device)
 
 # Define a dataset.
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"order": 1, "coefficients": np.array([0.0, 1.0])},
+    simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
@@ -70,6 +69,7 @@ best_model_state_dict = copy.deepcopy(bnn.state_dict())
 best_loss = torch.inf
 for epoch in range(n_epochs):
     loss_epoch = []
+    within_1sigma_epoch = []
     for batch in dataloader:
         # Forward pass through model.
         optimizer.zero_grad()
@@ -83,34 +83,50 @@ for epoch in range(n_epochs):
         optimizer.step()
         loss_epoch.append(loss.item())
 
+        # Check predictive variance.
+        within_1sigma_epoch.append(
+            statistics.compute_coverage(
+                observations=batch[1].to(device),
+                mu=out[0],
+                sigma=out[1].sqrt(),
+                alphas=torch.tensor([1.0]),
+            ).item()
+        )
+
     avg_loss = np.mean(loss_epoch)
     loss_train.append(avg_loss)
     if avg_loss < best_loss:
         best_loss = avg_loss
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
-    print(f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss}")
+    print(
+        f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss}, {100.0*np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
+    )
 
 # Plot some examples.
 final_model_state_dict = copy.deepcopy(bnn.state_dict())
 bnn.load_state_dict(best_model_state_dict)
-input = []
-output = []
-n_examples = 1000
 bnn = bnn.to("cpu")
+input = []
+observations = []
+n_examples = 1000
 dataset.data_generator.simulator_kwargs_generator["x"] = lambda: 2.0 * (
     torch.rand(1) - 0.5
 )
 for n in range(n_examples):
     data = dataset[n]
     input.append(data[0])
+    observations.append(data[1])
 input = torch.stack(input, dim=0)
-output = bnn(types.MuVar(input))
+observations = torch.stack(observations, dim=0)
+with torch.no_grad():
+    output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
-y = output[0].detach().cpu().squeeze()[sort_inds]
-yerr = output[1].detach().cpu().sqrt().squeeze()[sort_inds]
+y = output[0].cpu().squeeze()[sort_inds]
+yerr = output[1].cpu().sqrt().squeeze()[sort_inds]
 y_gt = data_generator.simulator(x=x, **data_generator.simulator_kwargs)
 yerr_gt = noise_tform.noise_fxn_kwargs_generator["sigma"](x)
+observations = observations.cpu().squeeze()[sort_inds]
 fig, ax = plt.subplots()
 ax.plot(x, y_gt, color="k", linestyle=":", label="ground truth")
 ax.fill_between(
@@ -134,5 +150,13 @@ ax.plot(x, y, marker=".", linestyle="", label="predicted mean")
 ax.set_ylim((y_gt.min(), y_gt.max()))
 plt.legend()
 plt.show()
+
+# Plot coverage of predictive variance.
+coverage = statistics.compute_coverage(
+    observations=observations,
+    mu=y,
+    sigma=yerr,
+    alphas=torch.tensor([1.0, 2.0]),
+)
 
 print("Done")

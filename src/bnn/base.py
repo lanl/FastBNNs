@@ -102,7 +102,7 @@ class BNNLightning(L.LightningModule):
         loss: BNNLoss,
         optimizer: Callable = partial(torch.optim.AdamW, lr=1.0e-3),
     ) -> None:
-        """Initialize Lightning wrapper..
+        """Initialize Lightning wrapper.
 
         Args:
             bnn: Bayesian neural network to wrap in Lightning.

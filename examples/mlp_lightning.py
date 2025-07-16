@@ -12,9 +12,7 @@ from simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.
-in_features = 1
-out_features = 1
-hidden_features = 32
+hidden_features = 1024
 n_hidden_layers = 1
 in_features = 1
 out_features = 1
@@ -33,9 +31,14 @@ prior = priors.Distribution(
 )
 
 # Define a dataset.
+# data_generator = generators.Generator(
+#     simulator=polynomials.polynomial,
+#     simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
+#     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
+# )
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"order": 1, "coefficients": np.array([0.0, 1.0])},
+    simulator_kwargs={"coefficients": np.array([0.0, 1.0, 1.0, -1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
@@ -81,11 +84,12 @@ for n in range(n_examples):
     data = dataset[n]
     input.append(data[0])
 input = torch.stack(input, dim=0)
-output = bnn(types.MuVar(input))
+with torch.no_grad():
+    output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
-y = output[0].detach().cpu().squeeze()[sort_inds]
-yerr = output[1].detach().cpu().sqrt().squeeze()[sort_inds]
+y = output[0].cpu().squeeze()[sort_inds]
+yerr = output[1].cpu().sqrt().squeeze()[sort_inds]
 y_gt = data_generator.simulator(x=x, **data_generator.simulator_kwargs)
 yerr_gt = noise_tform.noise_fxn_kwargs_generator["sigma"](x)
 fig, ax = plt.subplots()

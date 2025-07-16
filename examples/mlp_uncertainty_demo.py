@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
+from analysis import statistics
 from bnn import base, losses, priors, types
 import datasets.polynomial
 from models import mlp
@@ -13,8 +14,6 @@ from simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.
-in_features = 1
-out_features = 1
 hidden_features = 32
 n_hidden_layers = 1
 in_features = 1
@@ -38,7 +37,7 @@ prior = priors.Distribution(
 # Define a dataset.
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"order": 1, "coefficients": np.array([0.0, 1.0])},
+    simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
@@ -62,7 +61,7 @@ loss_fn = losses.ELBO(
     beta=1.0 / n_batches,  # see Graves 2011
 )
 n_epochs = 100
-optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-3)
+optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-2)
 
 # Train.
 loss_train = []
@@ -70,6 +69,7 @@ best_model_state_dict = copy.deepcopy(bnn.state_dict())
 best_loss = torch.inf
 for epoch in range(n_epochs):
     loss_epoch = []
+    within_1sigma_epoch = []
     for batch in dataloader:
         # Forward pass through model.
         optimizer.zero_grad()
@@ -92,12 +92,24 @@ for epoch in range(n_epochs):
         optimizer.step()
         loss_epoch.append(loss.item())
 
+        # Check predictive variance.
+        within_1sigma_epoch.append(
+            statistics.compute_coverage(
+                observations=batch[1].to(device).squeeze(),
+                mu=out[0].squeeze(),
+                sigma=out[1].sqrt().squeeze(),
+                alphas=torch.tensor([1.0]),
+            ).item()
+        )
+
     avg_loss = np.mean(loss_epoch)
     loss_train.append(avg_loss)
     if avg_loss < best_loss:
         best_loss = avg_loss
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
-    print(f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss}")
+    print(
+        f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss}, {100.0*np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
+    )
 
 # Plot some examples.
 final_model_state_dict = copy.deepcopy(bnn.state_dict())
