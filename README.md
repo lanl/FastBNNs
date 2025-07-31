@@ -61,10 +61,10 @@ Examples of training the Bayesian MLP from [Basic Usage](#basic-usage) using the
 The base model wrapper `bnn.base.BNN` attempts to convert a neural network `nn: torch.nn.Module` to a Bayesian neural network with Normally distributed parameters assuming a mean-field approximation (i.e., all parameters are conditionally independent of the data).
 This is done by wrapping sub-modules of `nn` with an appropriate wrapper from `bnn.wrappers`.
 The Bayesian neural network `bnn = bnn.base.BNN(nn)` should behave as a stochastic version of `nn` on a typical forward pass `output = bnn(data)`, and no issues are known at this time.
-However, to leverage the fast inference methods of [1, 2] while maintaining the flexibliity of the wrapper (i.e., one line conversion to/from a Bayesian version of `nn`), we introduce a custom type that wraps `data` for a forward call as `bnn(bnn.types.MuVar(data))`.
+However, to leverage the fast inference methods of [1, 2] while maintaining the flexibility of the wrapper (i.e., one line conversion to/from a Bayesian version of `nn`), we introduce a custom type that wraps `data` for a forward call as `bnn(bnn.types.MuVar(data))`.
 This allows us to propagate the predictive mean and variance through each sub-module of `nn`.
-To accomodate non-`torch.nn.Module` operations in the neural network, `bnn.types.MuVar` implements several common tensor operations (e.g., addition, concatenation, ...) that act on the mean and variance as needed for the operation.
-Unfortunately, some operations, such as those using external calls to C, are not accounted for and hence neural networks using such operations may not be compatible with `bnn.base.BNN` (e.g., `torch.nn.Transformer`) without monkey-patching those operations to accomadate the `bnn.types.MuVar` type.
+To accommodate non-`torch.nn.Module` operations in the neural network, `bnn.types.MuVar` implements several common tensor operations (e.g., addition, concatenation, ...) that act on the mean and variance as needed for the operation.
+Unfortunately, some operations, such as those using external calls to C, are not accounted for and hence neural networks using such operations may not be compatible with `bnn.base.BNN` (e.g., `torch.nn.Transformer`) without monkey-patching those operations to accommodate the `bnn.types.MuVar` type.
 
 ## References
 
