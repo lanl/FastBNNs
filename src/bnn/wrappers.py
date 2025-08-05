@@ -60,7 +60,6 @@ def select_default_propagator(
         # A custom propagator exists for this module so we'll use that.
         propagator = getattr(bnn.inference, module.__class__.__name__)
         moment_propagator = propagator()
-    # elif not is_bayesian or (
     elif not is_bayesian or (
         len([p for p in module.parameters() if p.requires_grad]) == 0
     ):
@@ -100,7 +99,7 @@ def convert_to_bnn_(
     model: torch.nn.Module,
     wrapper_kwargs: dict = {},
     wrapper_kwargs_global: dict = {},
-    passthrough_module_tags: list = [],
+    passthrough_module_tags: Union[list, tuple] = (),
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -116,7 +115,7 @@ def convert_to_bnn_(
             Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
         passthrough_module_tags: List of strings that, if present in the class
             name of a module, will indicate the module should be treated as a
-            passthrough module: i.e., apply forward method to mean and variance
+            passthrough module, i.e., apply forward method to mean and variance
             directly without additional logic.
     """
     # Search for modules of `model` to convert, removing stem modules from the
@@ -278,20 +277,20 @@ class BayesianModule(BayesianModuleBase):
                 parameters of this layer (i.e., the variational distributions).
                 These should be uninitialized or partially initialized
                 distributions that accept inputs `loc` and `scale` and return
-                an object with a .sample() method which returns tensors
+                an object with a .rsample() method which returns tensors
                 corresponding to sampled parameters.  For example,
-                samplers["weight"](loc=0.0, scale=1.0).sample()
+                samplers["weight"](loc=0.0, scale=1.0).rsample()
                 must return a tensor of size (out_features, in_features) if
                 module = torch.nn.Linear(in_features, out_features)
             samplers_init: Dictionary of samplers that can be sampled to reset
                 parameters of this layer.  Each value is a tuple corresponding
                 to the mean and (unscaled, see `scale_tform` usage) standard deviation
-                parameters (e.g., samplers_init["weight_mean"].sample() should
+                parameters (e.g., samplers_init["weight_mean"].rsample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
             priors: Dictionary of prior distributions over layer parameters.
                 These distributions should be initialized (like `samplers_init`)
-                and have a .sample() method returning a tensor of the same
+                and have a .rsample() method returning a tensor of the same
                 size as the corresponding layer parameter and a .log_prob(x) method
                 returning the log of the PDF at input x in the distributions domain.
                 These distributions are used in self.compute_kl_divergence().
@@ -416,7 +415,7 @@ class BayesianModule(BayesianModuleBase):
     @property
     def module_params(self) -> dict:
         """Return a sample of this module's parameters."""
-        return {key: val.sample() for key, val in self.samplers.items()}
+        return {key: val.rsample() for key, val in self.samplers.items()}
 
     @property
     def module(self) -> torch.nn.Module:
@@ -449,14 +448,14 @@ class BayesianModule(BayesianModuleBase):
         if f"{name}_mean" in inst_modules.get("_module_params", {}).keys():
             return self.get_named_sampler(name=name).sample()
 
-        # Check remaining modules and parameters for requested attribue.
+        # Check remaining modules and parameters for requested attribute.
         inst_params = self.__dict__.get("_parameters", {})
         if name in inst_modules.keys():
             return inst_modules[name]
         elif name in inst_params.keys():
             return inst_params[name]
 
-        # Raise attribue error if we reach this point.
+        # Raise attribute error if we reach this point.
         raise AttributeError(
             f"'{type(self).__name__}' object has no attribute '{name}'"
         )
