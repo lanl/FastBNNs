@@ -30,7 +30,7 @@ HAS_COMPATIBLE_FUNCTIONAL = [
 
 # Define layers that can be applied to input mean and variance without additional
 # processing (e.g., a flatten layer, which only changes the shape of the input).
-PASSTHROUGH = [
+BROADCAST = [
     "ChannelShuffle",
     "Identity",
     "Flatten",
@@ -99,7 +99,7 @@ def convert_to_bnn_(
     model: torch.nn.Module,
     wrapper_kwargs: dict = {},
     wrapper_kwargs_global: dict = {},
-    passthrough_module_tags: Union[list, tuple] = (),
+    broadcast_module_tags: Union[list, tuple] = (),
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -113,9 +113,9 @@ def convert_to_bnn_(
         wrapper_kwargs_global: Keyword arguments that we'll merge
             with values of bayesian_module_kwargs as, e.g.,
             Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
-        passthrough_module_tags: List of strings that, if present in the class
+        broadcast_module_tags: List of strings that, if present in the class
             name of a module, will indicate the module should be treated as a
-            passthrough module, i.e., apply forward method to mean and variance
+            broadcast module, i.e., apply forward method to mean and variance
             directly without additional logic.
     """
     # Search for modules of `model` to convert, removing stem modules from the
@@ -133,17 +133,17 @@ def convert_to_bnn_(
 
         # Search for an appropriate module converter, in the following order of
         # priority:
-        #   (1) Passthrough layer if tagged by passthrough_module_tags or listed
+        #   (1) Broadcast layer if tagged by broadcast_module_tags or listed
         #       in PASSTHROUGH list.
         #   (2) Named converters if a wrapper exists with the same name as the
         #       module class.
         #   (3) BayesianModule
-        if (module_name in PASSTHROUGH) or any(
-            [tag in module_name for tag in passthrough_module_tags]
+        if (module_name in BROADCAST) or any(
+            [tag in module_name for tag in broadcast_module_tags]
         ):
             # This module can be broadcast along (mu, var) without additional
             # processing (e.g., a flatten layer, which only changes shapes).
-            bayesian_layer = PassthroughModule(module=module, **module_kwargs)
+            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
         elif hasattr(CURRENT_MODULE, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(CURRENT_MODULE, module_name)(
@@ -179,12 +179,12 @@ def convert_to_nn(
     # Replace Bayesian leaf modules with standard counterparts.
     for leaf in leaf_names:
         # If `leaf` is a named `mu` parameter, we'll reset the module to the `mu` leaf.
-        # If the module is a PassthroughModule, we'll remove the passthrough wrapper.
+        # If the module is a BroadcastModule, we just need to remove the wrapper.
         module = model.get_submodule(leaf)
         leaf_split = leaf.split(".")
         if leaf_split[-1] == "mu":
             model.set_submodule(".".join(leaf_split[:-1]), module)
-        elif isinstance(module, PassthroughModule):
+        elif isinstance(module, BroadcastModule):
             model.set_submodule(leaf, module.module)
 
     return model
@@ -535,8 +535,8 @@ class BayesianModule(BayesianModuleBase):
         return out
 
 
-class PassthroughModule(torch.nn.Module):
-    """PassthroughModule for compatibility with other Bayesian layers."""
+class BroadcastModule(torch.nn.Module):
+    """BroadcastModule for compatibility with other Bayesian layers."""
 
     def __init__(
         self,
@@ -544,7 +544,7 @@ class PassthroughModule(torch.nn.Module):
         *args,
         **kwargs,
     ) -> None:
-        """PassthroughModule initializer.
+        """BroadcastModule initializer.
 
         Args:
             module: Module that will be applied in forward pass.  When the
