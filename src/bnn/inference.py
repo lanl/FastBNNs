@@ -61,19 +61,38 @@ class MomentPropagator(torch.nn.Module):
 
     def forward(
         self,
-        module: torch.nn.Module,
-        input_mu: Union[tuple, torch.Tensor],
-        input_var: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        module: Callable,
+        input: Iterable,
+    ) -> Union[Iterable, tuple]:
         """Forward method for MomentPropagator modules.
 
         Args:
             module: Instance of the layer through which we will propagate moments.
-            input_mu: Mean of input, or optionally, tuple organizing mean and variance
-                of the input (in which case `input_var` is ignored).
-            input_var: Variance of input (ignored if `input_mu` is a tuple).
+            input: Input passed to layer, which will typically be a torch.Tensor or
+                types.MuVar.
         """
         raise NotImplementedError
+
+
+class BasicPropagator(MomentPropagator):
+    """Propagate mean and variance through `module`.
+
+    This propagator can be used with modules that have "simple" forward passes
+    for which propagation rules are already defined by methods in types.MuVar
+    (e.g., forward pass is just input*param1 + param2).
+    """
+
+    def __init__(self):
+        """Initializer for BasicPropagator inference module."""
+        super().__init__()
+
+    def forward(
+        self,
+        module: Callable,
+        input: Iterable,
+    ) -> Union[Iterable, tuple]:
+        """Propagate moments by relying intrinsically on methods in types.MuVar."""
+        return module.module(input)
 
 
 class UnscentedTransform(MomentPropagator):
@@ -142,7 +161,7 @@ class UnscentedTransform(MomentPropagator):
             )
         else:
             # Prepare a sampled instance of the module.  For stochastic modules,
-            # module.module returns a new sample of weighs each time, so
+            # module.module returns a new sample of weights each time, so
             # we need to prepare the instance before running .forward() on each
             # sigma point.
             if hasattr(module, "module"):
@@ -211,10 +230,11 @@ class MonteCarlo(MomentPropagator):
 class Linear(MomentPropagator):
     """Deterministic moment propagation of mean and variance through a Linear layer."""
 
+    functional = torch.nn.functional.linear
+
     def __init__(self):
         """Initializer for Linear inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.linear
 
     def forward(
         self,
@@ -348,10 +368,11 @@ class Conv1d(ConvNd):
     with module-name-based searches.
     """
 
+    functional = torch.nn.functional.conv1d
+
     def __init__(self):
         """Initializer for Conv1d inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.conv1d
 
 
 class Conv2d(ConvNd):
@@ -361,10 +382,11 @@ class Conv2d(ConvNd):
     with module-name-based searches.
     """
 
+    functional = torch.nn.functional.conv2d
+
     def __init__(self):
         """Initializer for Conv2d inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.conv2d
 
 
 class Conv3d(ConvNd):
@@ -374,10 +396,11 @@ class Conv3d(ConvNd):
     with module-name-based searches.
     """
 
+    functional = torch.nn.functional.conv3d
+
     def __init__(self):
         """Initializer for Conv3d inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.conv3d
 
 
 class ConvTransposeNd(MomentPropagator):
@@ -458,30 +481,33 @@ class ConvTransposeNd(MomentPropagator):
 class ConvTranspose1d(ConvTransposeNd):
     """Deterministic moment propagation of mean and variance through a ConvTranspose1d layer."""
 
+    functional = torch.nn.functional.conv_transpose1d
+
     def __init__(self):
         """Initializer for ConvTranspose1d inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.conv_transpose1d
         self.num_spatial_dims = 1
 
 
 class ConvTranspose2d(ConvTransposeNd):
     """Deterministic moment propagation of mean and variance through a ConvTranspose2d layer."""
 
+    functional = torch.nn.functional.conv_transpose2d
+
     def __init__(self):
         """Initializer for ConvTranspose2d inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.conv_transpose2d
         self.num_spatial_dims = 2
 
 
 class ConvTranspose3d(ConvTransposeNd):
     """Deterministic moment propagation of mean and variance through a ConvTranspose3d layer."""
 
+    functional = torch.nn.functional.conv_transpose3d
+
     def __init__(self):
         """Initializer for ConvTranspose3d inference module"""
         super().__init__()
-        self.functional = torch.nn.functional.conv_transpose3d
         self.num_spatial_dims = 3
 
 
