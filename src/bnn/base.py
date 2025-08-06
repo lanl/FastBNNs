@@ -17,7 +17,11 @@ class BNN(torch.nn.Module):
     """Bayesian neural network base class."""
 
     def __init__(
-        self, nn: torch.nn.Module, convert_in_place: bool = True, *args, **kwargs
+        self,
+        nn: torch.nn.Module,
+        convert_in_place: bool = True,
+        *args,
+        **kwargs,
     ):
         """Initialize Bayesian neural network.
 
