@@ -16,17 +16,7 @@ from bnn.inference import MomentPropagator
 from bnn.losses import kl_divergence_sampled
 from bnn.priors import Distribution
 from bnn.types import MuVar
-from utils.torch_utils import get_torch_functional
 
-
-# List out torch.nn modules whose functionals in torch.nn.functional can directly
-# replicate the corresponding torch.nn behavior (see torch.nn.Conv2d for an
-# example of when this is NOT the case, since the forward pass contains additional
-# logic/processing before the call to torch.nn.functional.conv2d()).
-HAS_COMPATIBLE_FUNCTIONAL = [
-    "Linear",
-    "Bilinear",
-]
 
 # Define layers that can be applied to input mean and variance without additional
 # processing (e.g., a flatten layer, which only changes the shape of the input).
@@ -326,18 +316,6 @@ class BayesianModule(BayesianModuleBase):
         self.rho = rho
         self._module_params = _module_params
 
-        # Prepare a module copy for sampling (we'll actually initialize this
-        # on first use so that we don't waste memory if it's never needed).
-        self._module = None
-
-        # Store a functional version of this module if possible (some modules
-        # won't have a functional, or their action can't be directly replicated
-        # through the functional without additional processing).
-        if module.__class__.__name__ in HAS_COMPATIBLE_FUNCTIONAL:
-            self._functional = get_torch_functional(module.__class__)
-        else:
-            self._functional = None
-
         # Validate and set moment propagator.
         # Set moment propagator.
         if moment_propagator is None:
@@ -420,26 +398,9 @@ class BayesianModule(BayesianModuleBase):
     @property
     def module(self) -> torch.nn.Module:
         """Prepare a callable that acts like input `module` with random parameters."""
-        if self._functional is None:
-            # No functional is available/compatible with this converter so we'll use
-            # copies of the input `module` instead.
-            if self.rho is None:
-                # If rho is None, we don't have any parameters to sample so we can
-                # just return self.mu.
-                return self.mu
-            else:
-                # In this case, we want to resample parameters of self._module.
-                if self._module is None:
-                    self._module = copy.deepcopy(self.mu)
-                params = {key: val for key, val in self._module.named_parameters()}
-                params_sampled = self.module_params
-                for param_name, param in params.items():
-                    param.data = params_sampled[param_name]
-
-                return self._module
-        else:
-            # Return the functional with sampled parameters pre-populated.
-            return functools.partial(self._functional, **self.module_params)
+        return functools.partial(
+            torch.func.functional_call, self.mu, self.module_params
+        )
 
     def __getattr__(self, name: str) -> Any:
         """Custom getattr to return samples of named parameters."""
