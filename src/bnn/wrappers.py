@@ -344,13 +344,21 @@ class BayesianModule(BayesianModuleBase):
 
         # Define variational distribution sampler types.
         if samplers is None:
-            samplers = {key: dist.Normal for key, _ in module.named_parameters()}
+            samplers = {}
+            for key, _ in module.named_parameters():
+                if self._module_params[key + "_rho"] is None:
+                    samplers[key] = None
+                else:
+                    samplers[key] = dist.Normal
         self._samplers = samplers
 
         # Set priors.
         if priors is None:
             # Default to same distributions as `samplers_init` mean samplers.
-            priors = {key: samplers_init[key + "_mean"] for key in samplers.keys()}
+            priors = {
+                key: Distribution(samplers_init[key + "_mean"])
+                for key in samplers.keys()
+            }
         self.priors = priors
 
     @property
@@ -373,10 +381,13 @@ class BayesianModule(BayesianModuleBase):
 
     def get_named_sampler(self, name: str) -> torch.distributions.Distribution:
         """Initialize and return the requested module parameter sampler."""
-        return self._samplers[name](
-            loc=self._module_params[name + "_mean"],
-            scale=self.scale_tform(self._module_params[name + "_rho"]),
-        )
+        if self._samplers[name] is None:
+            return None
+        else:
+            return self._samplers[name](
+                loc=self._module_params[name + "_mean"],
+                scale=self.scale_tform(self._module_params[name + "_rho"]),
+            )
 
     @property
     def samplers(self) -> dict:
@@ -393,7 +404,16 @@ class BayesianModule(BayesianModuleBase):
     @property
     def module_params(self) -> dict:
         """Return a sample of this module's parameters."""
-        return {key: val.rsample() for key, val in self.samplers.items()}
+        params = {}
+        for key, val in self.samplers.items():
+            if val is None:
+                # This parameter is not treated as a distribution so we can
+                # directly return the mean value.
+                params[key] = self._module_params[key + "_mean"]
+            else:
+                params[key] = val.rsample()
+
+        return params
 
     @property
     def module(self) -> torch.nn.Module:
