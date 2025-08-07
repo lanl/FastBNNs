@@ -18,6 +18,7 @@ class InverseTransformSampling(torch.nn.Module):
         self,
         distribution: Distribution = torch.distributions.Normal(loc=0.0, scale=1.0),
         learn_alpha: bool = False,
+        alpha_init: torch.tensor = torch.tensor([1.0]),
         eps: float = 1.0e-6,
         *args,
         **kwargs
@@ -36,7 +37,7 @@ class InverseTransformSampling(torch.nn.Module):
         # Define the domain transform to convert inputs in
         # (-\inf, \inf) to [0, 1]
         self._alpha = torch.nn.Parameter(
-            torch.tensor([0.5413]), requires_grad=learn_alpha
+            torch.log(torch.exp(alpha_init) - 1.0), requires_grad=learn_alpha
         )  # self.alpha=softplus(self._alpha)
         self.domain_tform = scaled_sigmoid
 
