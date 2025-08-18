@@ -67,7 +67,6 @@ To accommodate non-`torch.nn.Module` operations in the neural network, `bnn.type
 Unfortunately, some operations, such as those using external calls to C, are not accounted for and hence neural networks using such operations may not be compatible with `bnn.base.BNN` (e.g., `torch.nn.Transformer`) without monkey-patching those operations to accommodate the `bnn.types.MuVar` type.
 
 ## References
-
 [1] David J. Schodt, Ryan Brown, Michael Merritt, Samuel Park, Delsin Menolascino, and Mark A.
 Peot. A framework for variational inference of lightweight bayesian neural networks with
 heteroscedastic uncertainties. 2024. arXiv:2402.14532 [cs].
