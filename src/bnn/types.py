@@ -60,6 +60,7 @@ class MuVar:
         mu: Union[
             torch.Tensor,
             list[torch.Tensor, torch.Tensor],
+            tuple[torch.Tensor, torch.Tensor],
             MuVar,
         ],
         var: Optional[torch.Tensor] = None,
@@ -71,9 +72,10 @@ class MuVar:
                 both mean and variance (to allow calling this method on a list
                 without unpacking arguments).
         """
-        if isinstance(mu, list):
-            # Mean and variance passed as a list.
-            self.mu_var = mu
+        if isinstance(mu, (list, tuple)):
+            # Mean and variance passed as a list or tuple. Ensure we store as
+            # a list so that it is mutable.
+            self.mu_var = list(mu)
         elif isinstance(mu, MuVar):
             # Repackage for compatibility.
             self.mu_var = mu.mu_var
@@ -136,6 +138,9 @@ class MuVar:
             for k, v in kwargs.items():
                 kwargs_mu[k], kwargs_var[k] = split_muvar(v)
             return MuVar(func(*args_mu, **kwargs_mu), func(*args_var, **kwargs_var))
+        elif hasattr(self, func.__name__):
+            # A custom implementation of this torch function was defined for this type.
+            return getattr(self, func.__name__)(*args, **kwargs)
         else:
             # Return NotImplemented to allow other overrides to be used.
             return NotImplemented
@@ -232,7 +237,7 @@ class MuVar:
         elif isinstance(input, (list, MuVar)):
             # Multiplication of two random independent variables:
             #   E[X@Y] = E[X] @ E[Y]
-            #   V[X@Y] = E[X]**2 @ V[Y] + E[Y]**2 @ V[X] + V[X] @ V[Y]
+            #   V[X@Y] = E[X]**2 @ V[Y] + V[X] @  E[Y]**2 + V[X] @ V[Y]
             mu = self.mu_var[0] @ input[0]
             var = (
                 (self.mu_var[0] ** 2) @ input[1]
@@ -270,6 +275,27 @@ class MuVar:
         """Custom numel() to avoid complicated logic in __getattr__ above."""
         return self.mu_var[0].numel()
 
+    def mean(self, *args, **kwargs) -> MuVar:
+        """Custom replacement of torch.mean() for MuVar type."""
+        # Assuming independence, we can directly apply mean to self.mu_var[0].
+        x_mean = self.mu_var[0].mean(*args, **kwargs)
+
+        # To compute variance, we call the torch version of mean() with
+        # keepdim=True so we can account for the scaling factor:
+        # assuming independence, V[(x_0+x_1) / 2] = (V[x_0]+V[x_1]) / 4
+        if (args == ()) and (kwargs == {}):
+            x_var = self.mu_var[1].mean()
+            x_var /= self.mu_var[1].numel() ** 2
+        else:
+            x_var = self.mu_var[1].mean(*args, **(kwargs | {"keepdim": True}))
+            x_var /= (
+                torch.tensor(self.mu_var[1].shape) / torch.tensor(x_var.shape)
+            ).squeeze() ** 2
+        if kwargs.pop("keepdim", None) is None:
+            return MuVar(x_mean, x_var)
+        else:
+            return MuVar(x_mean, x_var.squeeze())
+
 
 if __name__ == "__main__":
     # Scalar operations.
@@ -290,6 +316,7 @@ if __name__ == "__main__":
     print(a.to("cpu"))
     print(a.numel())
     print(a.sum())
+    print(a.mean())
     print(a @ b)
     print(torch.cat([a, b], dim=-1))
     print(torch.nn.functional.pad(a, [0, 1, 2, 0]))

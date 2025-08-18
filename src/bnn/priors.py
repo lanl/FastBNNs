@@ -40,7 +40,7 @@ class Distribution(torch.nn.Module):
         """Compute the log PDF of the prior at points `x`."""
         return self.distribution.log_prob(x)
 
-    def sample(self, sample_shape: Iterable = (1,)) -> torch.Tensor:
+    def sample(self, sample_shape: Iterable = torch.Size()) -> torch.Tensor:
         """Generate samples from the prior of size `sample_shape`."""
         return self.distribution.sample(sample_shape=sample_shape)
 
@@ -73,7 +73,7 @@ class SpikeSlab(Distribution):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    # Example using an IsotropicNormal prior.
+    # Example using an SpikeSlab prior.
     prior = SpikeSlab()
     sample = prior.sample(sample_shape=(100, 1))
     x = torch.linspace(-5.0, 5.0, 1000)

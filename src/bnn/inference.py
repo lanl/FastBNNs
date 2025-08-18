@@ -140,7 +140,7 @@ class UnscentedTransform(MomentPropagator):
             # Perform n_module_samples unscented transforms and combine results.
             mu_samples = []
             var_samples = []
-            for s in range(self.n_module_samples):
+            for _ in range(self.n_module_samples):
                 if hasattr(module, "module"):
                     module_sample = module.module
                 else:
