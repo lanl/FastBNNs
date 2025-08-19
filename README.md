@@ -78,7 +78,7 @@ in Neural Networks, May 2015. arXiv:1505.05424 [cs, stat]
 
 ## Copyright
 
-LANL **O4956**
+LANL O4956
 
 &copy; 2025. Triad National Security, LLC. All rights reserved.
 
