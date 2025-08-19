@@ -49,7 +49,7 @@ SIMPLE_TORCH_FUNCS = [
 ]
 
 # Define additional tensor-specific methods that can only be called as x.method(), not torch.method(x).
-TENSOR_METHODS = ["cpu", "cuda", "to", "requires_grad_"]
+TENSOR_METHODS = ["cpu", "cuda", "to", "requires_grad_", "view"]
 
 
 class MuVar:
