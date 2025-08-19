@@ -251,6 +251,7 @@ class BayesianModule(BayesianModuleBase):
         module: torch.nn.Module,
         samplers: Optional[dict] = None,
         samplers_init: Optional[dict] = None,
+        resample_mean: bool = True,
         priors: Optional[dict] = None,
         moment_propagator: Optional[MomentPropagator] = None,
         learn_var: bool = True,
@@ -278,6 +279,10 @@ class BayesianModule(BayesianModuleBase):
                 parameters (e.g., samplers_init["weight_mean"].rsample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
+            resample_mean: Flag indicating parameter means should be resampled using
+                appropriate samplers from `samplers_init` before training. This can
+                be set to False to initialize mean values to parameter values of the
+                input module (e.g., if pretrained).
             priors: Dictionary of prior distributions over layer parameters.
                 These distributions should be initialized (like `samplers_init`)
                 and have a .rsample() method returning a tensor of the same
@@ -340,7 +345,9 @@ class BayesianModule(BayesianModuleBase):
                         high=-2.0,
                     )
         self.samplers_init = samplers_init
-        self.reset_parameters()
+        self.resample_mean = resample_mean
+        if learn_var:
+            self.reset_parameters()
 
         # Define variational distribution sampler types.
         if samplers is None:
@@ -445,7 +452,12 @@ class BayesianModule(BayesianModuleBase):
         """Resample layer parameters from initial distributions."""
         for key, param in self._module_params.items():
             if param is not None:
-                param.data = self.samplers_init[key].sample(sample_shape=param.shape)
+                # If this is a parameter mean, verify self.resample_mean flag
+                # before resampling.
+                if ("_mean" not in key) or self.resample_mean:
+                    param.data = self.samplers_init[key].sample(
+                        sample_shape=param.shape
+                    )
 
     def compute_kl_divergence(
         self, priors: Optional[Union[dict, Distribution]] = None, n_samples: int = 1
