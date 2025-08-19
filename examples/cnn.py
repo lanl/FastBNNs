@@ -6,38 +6,46 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 import torch
+from torchvision.transforms import v2
 
+from activations import InverseTransformSampling
+from analysis import statistics
 from bnn import base, losses, priors, types
 from datasets import generic
-from models import cnn
 from simulation import generators, images, observation
 
 
-# Create a Bayesian CNN to predict location of a blob in an image.
+# Create a CNN to predict location of a blob in an image.
+# Use a custom, data-informed activation to demonstrate FastBNNs support for
+# arbitrary nonlinearities.
 in_channels = 1
 out_channels = 1
 hidden_features = 8
 kernel_size = 3
 stride = 1
 padding = "same"
-n_hidden_layers = 1
 im_size = (8, 8)
+x_dist = torch.distributions.Normal(loc=0.0, scale=im_size[0] / 4.0)
 nn = torch.nn.Sequential(
-    cnn.CNN(
+    torch.nn.Conv2d(
         in_channels=in_channels,
-        out_channels=out_channels,
+        out_channels=hidden_features,
         kernel_size=kernel_size,
         stride=stride,
         padding=padding,
-        n_hidden_layers=n_hidden_layers,
-        hidden_features=hidden_features,
-        activation=torch.nn.LeakyReLU,
     ),
-    torch.nn.LeakyReLU(),
+    torch.nn.ELU(),
     torch.nn.Flatten(),
-    torch.nn.Linear(in_features=np.prod(im_size) * out_channels, out_features=2),
+    torch.nn.Linear(in_features=np.prod(im_size) * hidden_features, out_features=2),
+    InverseTransformSampling(
+        distribution=x_dist,
+        learn_alpha=True,
+    ),
 )
-bnn = base.BNN(nn=nn, convert_in_place=False)
+
+# Convert `nn` to a BNN, setting learn_var=False for the custom activation
+wrapper_kwargs = {"4": {"learn_var": False, "resample_mean": False}}
+bnn = base.BNN(nn=nn, convert_in_place=False, wrapper_kwargs=wrapper_kwargs)
 device = torch.device("cuda")
 bnn = bnn.to(device)
 
@@ -51,7 +59,11 @@ data_generator = generators.Generator(
     simulator=images.gaussian_blobs,
     simulator_kwargs={"im_size": im_size, "sigma": np.array([1.0, 1.0])},
     simulator_kwargs_generator={
-        "mu": lambda: np.min(im_size) * (np.random.rand(2)[None, :] - 0.5),
+        "mu": lambda: torch.clamp(
+            x_dist.sample(sample_shape=(1, 2)),
+            min=-(im_size[0] - 1) / 2,
+            max=(im_size[0] - 1) / 2,
+        ),
         "amplitude": lambda: np.array([np.random.poisson(lam=100.0)]),
     },
 )
@@ -59,10 +71,15 @@ noise_tform = observation.NoiseTransform(
     noise_fxn=observation.sensor_noise,
     noise_fxn_kwargs={"sigma": 1.0},
 )
+scale_tform = v2.Normalize(mean=(8.5,), std=(19.5,))
+data_tform = torch.nn.Sequential(
+    noise_tform,
+    scale_tform,
+)
 n_data = 128 * 10
 batch_size = 128
 dataset = generic.SimulatedData(
-    data_generator=data_generator, dataset_length=n_data, transform=noise_tform
+    data_generator=data_generator, dataset_length=n_data, transform=data_tform
 )
 dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
 
@@ -73,14 +90,18 @@ loss_fn = losses.ELBO(
     kl_divergence=losses.KLDivergence(prior=prior),
     beta=1.0 / n_batches,  # see Graves 2011
 )
-n_epochs = 300
-optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-3)
+n_epochs = 200
+optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-2)
 
 # Train.
 loss_train = []
 best_model_state_dict = copy.deepcopy(bnn.state_dict())
 best_loss = torch.inf
+
 for epoch in range(n_epochs):
+    loss_epoch = []
+    within_1sigma_epoch = []
+    bnn.train(True)
     for batch in dataloader:
         # Forward pass through model.
         optimizer.zero_grad()
@@ -94,24 +115,43 @@ for epoch in range(n_epochs):
             var=out[1],
         )
 
-        # Update model.
+        # Compute gradients and clip to stabilize training.
         loss.backward()
+
+        # Update model.
         optimizer.step()
+        loss_epoch.append(loss.item())
 
-    print(f"epoch {epoch+1} of {n_epochs}: loss = {loss}")
-    loss_train.append(loss.detach().cpu())
-    if loss.item() < best_loss:
-        best_loss = loss.item()
+        # Check predictive variance.
+        within_1sigma_epoch.append(
+            statistics.compute_coverage(
+                observations=batch["input"]["mu"][:, 0].to(device),
+                mu=out[0],
+                sigma=out[1].sqrt(),
+                alphas=torch.tensor([1.0]),
+            ).item()
+        )
+
+    avg_loss = np.mean(loss_epoch)
+    loss_train.append(avg_loss)
+    if avg_loss < best_loss:
+        best_loss = avg_loss
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
+    print(
+        f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss:.2f}, {100.0*np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
+    )
 
-# Plot some examples.
+## Plot some examples.
+# Predictions with uncertainty.
 final_model_state_dict = copy.deepcopy(bnn.state_dict())
 bnn.load_state_dict(best_model_state_dict)
 n_val = 16
 dataloader_test = torch.utils.data.DataLoader(dataset=dataset, batch_size=n_val)
 bnn = bnn.to("cpu")
+bnn.eval()
 data = next(iter(dataloader_test))
-output = bnn(types.MuVar(data["output"].float()))
+with torch.no_grad():
+    output = bnn(types.MuVar(data["output"].float()))
 
 matched_colors = plt.get_cmap("viridis")
 fig, ax = plt.subplots()
@@ -145,5 +185,4 @@ ax.set_xlim((-im_size[1] / 2, im_size[1] / 2))
 ax.set_ylim((-im_size[0] / 2, im_size[0] / 2))
 plt.legend()
 plt.show()
-
-print("Done")
+print("done")

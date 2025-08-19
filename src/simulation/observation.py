@@ -69,7 +69,7 @@ class NoiseTransform(torch.nn.Module):
             for key, value_gen in self.noise_fxn_kwargs_generator.items()
         }
         noise_fxn_kwargs = self.noise_fxn_kwargs | generated_kwargs
-        return self.noise_fxn(x, **noise_fxn_kwargs)
+        return torch.tensor(self.noise_fxn(x, **noise_fxn_kwargs))
 
 
 if __name__ == "__main__":
