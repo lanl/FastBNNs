@@ -1,6 +1,7 @@
 """Example of training a Bayesian CNN."""
 
 import copy
+import random
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -20,7 +21,7 @@ from simulation import generators, images, observation
 # arbitrary nonlinearities.
 in_channels = 1
 out_channels = 1
-hidden_features = 8
+hidden_features = 4
 kernel_size = 3
 stride = 1
 padding = "same"
@@ -79,9 +80,20 @@ data_tform = torch.nn.Sequential(
 n_data = 128 * 10
 batch_size = 128
 dataset = generic.SimulatedData(
-    data_generator=data_generator, dataset_length=n_data, transform=data_tform
+    data_generator=data_generator,
+    dataset_length=n_data,
+    transform=data_tform,
+    cache=False,
 )
 dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
+n_data_val = 128 * 10
+dataset_val = generic.SimulatedData(
+    data_generator=data_generator,
+    dataset_length=n_data_val,
+    transform=data_tform,
+    cache=True,
+)
+dataloader_val = torch.utils.data.DataLoader(dataset=dataset_val, batch_size=batch_size)
 
 # Define optimizer and loss.
 n_batches = n_data // batch_size
@@ -95,12 +107,12 @@ optimizer = torch.optim.AdamW(bnn.parameters(), lr=1.0e-2)
 
 # Train.
 loss_train = []
+loss_val = []
 best_model_state_dict = copy.deepcopy(bnn.state_dict())
 best_loss = torch.inf
-
 for epoch in range(n_epochs):
-    loss_epoch = []
-    within_1sigma_epoch = []
+    loss_epoch_train = []
+    within_1sigma_train = []
     bnn.train(True)
     for batch in dataloader:
         # Forward pass through model.
@@ -120,10 +132,10 @@ for epoch in range(n_epochs):
 
         # Update model.
         optimizer.step()
-        loss_epoch.append(loss.item())
+        loss_epoch_train.append(loss.item())
 
         # Check predictive variance.
-        within_1sigma_epoch.append(
+        within_1sigma_train.append(
             statistics.compute_coverage(
                 observations=batch["input"]["mu"][:, 0].to(device),
                 mu=out[0],
@@ -132,36 +144,78 @@ for epoch in range(n_epochs):
             ).item()
         )
 
-    avg_loss = np.mean(loss_epoch)
-    loss_train.append(avg_loss)
-    if avg_loss < best_loss:
-        best_loss = avg_loss
+    # Evaluate on validation set.
+    with torch.no_grad():
+        bnn.eval()
+        loss_epoch_val = []
+        within_1sigma_val = []
+        for batch in dataloader_val:
+            # Forward pass through model.
+            out = bnn(types.MuVar(batch["output"].float().to(device)))
+
+            # Compute loss.
+            loss = loss_fn(
+                model=bnn,
+                input=out[0],
+                target=batch["input"]["mu"][:, 0].to(device),
+                var=out[1],
+            )
+            loss_epoch_val.append(loss.item())
+
+            # Check predictive variance.
+            within_1sigma_val.append(
+                statistics.compute_coverage(
+                    observations=batch["input"]["mu"][:, 0].to(device),
+                    mu=out[0],
+                    sigma=out[1].sqrt(),
+                    alphas=torch.tensor([1.0]),
+                ).item()
+            )
+
+    avg_loss_train = np.mean(loss_epoch_train)
+    avg_loss_val = np.mean(loss_epoch_val)
+    loss_train.append(avg_loss_train)
+    loss_val.append(avg_loss_val)
+    if avg_loss_val < best_loss:
+        best_loss = avg_loss_val
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
     print(
-        f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss:.2f}, {100.0*np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
+        f"epoch {epoch+1} of {n_epochs}: train loss = {avg_loss_train:.2f}, val loss = {avg_loss_val:.2f}, {100.0*np.mean(within_1sigma_val):.2f}% within 1 st. dev."
     )
 
 ## Plot some examples.
 # Predictions with uncertainty.
 final_model_state_dict = copy.deepcopy(bnn.state_dict())
 bnn.load_state_dict(best_model_state_dict)
-n_val = 16
-dataloader_test = torch.utils.data.DataLoader(dataset=dataset, batch_size=n_val)
-bnn = bnn.to("cpu")
-bnn.eval()
+xy_sampler_test = images.GridSamples(n_per_pixel=1, im_size=im_size)
+n_data_test = len(xy_sampler_test)
+data_generator_test = copy.deepcopy(data_generator)
+data_generator_test.simulator_kwargs_generator["mu"] = xy_sampler_test
+dataset_test = generic.SimulatedData(
+    data_generator=data_generator_test,
+    dataset_length=n_data_test,
+    transform=data_tform,
+    cache=True,
+)
+dataloader_test = torch.utils.data.DataLoader(
+    dataset=dataset_test, batch_size=batch_size
+)
 data = next(iter(dataloader_test))
 with torch.no_grad():
-    output = bnn(types.MuVar(data["output"].float()))
+    bnn.eval()
+    output = bnn(types.MuVar(data["output"].float().to(device)))
 
 matched_colors = plt.get_cmap("viridis")
+matched_colors = [matched_colors(n / n_data_test) for n in range(n_data_test)]
+random.shuffle(matched_colors)  # shuffle to move colors apart in plot
 fig, ax = plt.subplots()
-for n in range(n_val):
+for n in range(n_data_test):
     # Plot ground truth.
     ax.plot(
         data["input"]["mu"][n, 0, 1],
         data["input"]["mu"][n, 0, 0],
         ".",
-        color=matched_colors(n / n_val),
+        color=matched_colors[n],
     )
 
     # Plot prediction.
@@ -169,7 +223,7 @@ for n in range(n_val):
         (output[0][n, 1].detach().cpu(), output[0][n, 0].detach().cpu()),
         radius=output[1][n].detach().cpu().mean().sqrt(),
         fill=False,
-        color=matched_colors(n / n_val),
+        color=matched_colors[n],
     )
     ax.add_patch(circle)
 
@@ -177,7 +231,7 @@ for n in range(n_val):
     ax.plot(
         [output[0][n, 1].detach().cpu(), data["input"]["mu"][n, 0, 1]],
         [output[0][n, 0].detach().cpu(), data["input"]["mu"][n, 0, 0]],
-        color=matched_colors(n / n_val),
+        color=matched_colors[n],
     )
 ax.plot([], "k.", label="ground truth")
 ax.plot([], "ko", markerfacecolor="None", label="predicted +- 1 st. dev.")

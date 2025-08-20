@@ -5,6 +5,7 @@ from typing import Union
 
 import numpy as np
 import scipy.stats
+import torch
 
 
 def gaussian_blobs(
@@ -47,6 +48,31 @@ def gaussian_blobs(
         )
 
     return out
+
+
+class GridSamples:
+    def __init__(self, n_per_pixel: int = 10, im_size: Iterable = (8, 8)) -> None:
+        """Initialize stateful location sampler"""
+        self.n_per_pixel = n_per_pixel
+        grid = torch.meshgrid(
+            torch.arange(-im_size[0] // 2, im_size[0] // 2) + 0.5,
+            torch.arange(-im_size[0] // 2, im_size[0] // 2) + 0.5,
+            indexing="ij",
+        )
+        self.xy = torch.stack((grid[0].flatten(), grid[1].flatten())).T.repeat(
+            (n_per_pixel, 1)
+        )
+        self._counter = 0
+
+    def __len__(self) -> int:
+        """Return sampler length."""
+        return len(self.xy)
+
+    def __call__(self) -> torch.tensor:
+        """Return xy location."""
+        xy = self.xy[self._counter % len(self)][None, :]
+        self._counter += 1
+        return xy
 
 
 if __name__ == "__main__":
