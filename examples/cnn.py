@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torchvision.transforms import v2
 
-from activations import InverseTransformSampling
+from models.activations import InverseTransformSampling
 from analysis import statistics
 from bnn import base, losses, priors, types
 from datasets import generic

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "FastBNNs"
+license = "BSD-3-Clause"
+license-files = ["LICENSE.md"]
+description = "Fast training and inference for Bayesian neural networks."
+readme = "README.md"
+version = "0.0.0"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
