@@ -8,3 +8,6 @@ license = "BSD-3-Clause"
 license-files = ["LICENSE.md"]
 description = "Fast training and inference for Bayesian neural networks."
 readme = "README.md"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
