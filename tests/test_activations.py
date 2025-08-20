@@ -2,7 +2,7 @@
 
 import torch
 
-from activations import InverseTransformSampling, scaled_sigmoid
+from models.activations import InverseTransformSampling, scaled_sigmoid
 
 
 def test_scaled_sigmoid() -> None:
