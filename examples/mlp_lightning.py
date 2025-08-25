@@ -12,7 +12,7 @@ from simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.
-hidden_features = 1024
+hidden_features = 32
 n_hidden_layers = 1
 in_features = 1
 out_features = 1
@@ -27,18 +27,13 @@ bnn = base.BNN(nn=nn)
 
 # Define a prior (this one applies to all parameters in the model).
 prior = priors.Distribution(
-    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
+    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([0.5]))
 )
 
 # Define a dataset.
-# data_generator = generators.Generator(
-#     simulator=polynomials.polynomial,
-#     simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
-#     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
-# )
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"coefficients": np.array([0.0, 1.0, 1.0, -1.0])},
+    simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
