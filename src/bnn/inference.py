@@ -297,25 +297,25 @@ class ConvNd(MomentPropagator):
     ) -> Iterable:
         """Analytical moment propagation through layer."""
         # Modify input and prepare functional arguments.
-        if module.mu.padding_mode != "zeros":
+        if module._module.padding_mode != "zeros":
             # This is added to mimic torch.nn.modules.conv _conv_forward methods.
             input = torch.nn.functional.pad(
                 input,
-                module.mu._reversed_padding_repeated_twice,
-                mode=module.mu.padding_mode,
+                module._module._reversed_padding_repeated_twice,
+                mode=module._module.padding_mode,
             )
             functional_kwargs = {
-                "stride": module.mu.stride,
+                "stride": module._module.stride,
                 "padding": torch.nn.modules.utils._triple(0),
-                "dilation": module.mu.dilation,
-                "groups": module.mu.groups,
+                "dilation": module._module.dilation,
+                "groups": module._module.groups,
             }
         else:
             functional_kwargs = {
-                "stride": module.mu.stride,
-                "padding": module.mu.padding,
-                "dilation": module.mu.dilation,
-                "groups": module.mu.groups,
+                "stride": module._module.stride,
+                "padding": module._module.padding,
+                "dilation": module._module.dilation,
+                "groups": module._module.groups,
             }
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
@@ -418,20 +418,20 @@ class ConvTransposeNd(MomentPropagator):
     ) -> Iterable:
         """Analytical moment propagation through layer."""
         # Prepare functional arguments.
-        output_padding = module.mu._output_padding(
+        output_padding = module._module._output_padding(
             input,
             output_size,
-            module.mu.stride,
-            module.mu.padding,
-            module.mu.kernel_size,
+            module._module.stride,
+            module._module.padding,
+            module._module.kernel_size,
             self.num_spatial_dims,
-            module.mu.dilation,
+            module._module.dilation,
         )
         functional_kwargs = {
-            "stride": module.mu.stride,
-            "padding": module.mu.padding,
-            "dilation": module.mu.dilation,
-            "groups": module.mu.groups,
+            "stride": module._module.stride,
+            "padding": module._module.padding,
+            "dilation": module._module.dilation,
+            "groups": module._module.groups,
             "output_padding": output_padding,
         }
         ## Compute analytical result under mean-field approximation following

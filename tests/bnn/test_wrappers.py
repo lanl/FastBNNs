@@ -2,7 +2,6 @@
 
 import torch
 
-import bnn.inference
 import bnn.types
 import bnn.wrappers
 
