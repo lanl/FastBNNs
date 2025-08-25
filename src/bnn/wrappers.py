@@ -300,25 +300,21 @@ class BayesianModule(BayesianModuleBase):
         super().__init__(*args, **kwargs)
         self.__name__ = module.__class__.__name__
 
-        # Store `module` and a copy of `module` to act as the mean and unscaled
-        # st. dev. parameters (rho), respectively.
-        mu = module
+        # Define mean and unscaled standard deviation parameters.
         module_params = [p for p in module.named_parameters()]
         _module_params = torch.nn.ParameterDict()
         self._learn_var = learn_var
         if (len(module_params) > 0) and learn_var:
-            # Prepare a copy of `module` to act as the unscaled st. dev. parameters.
-            rho = copy.deepcopy(module)
             for key, _ in module_params:
-                _module_params[key + "_mean"] = getattr(mu, key)
-                _module_params[key + "_rho"] = getattr(rho, key)
+                _module_params[key + "_mean"] = getattr(module, key)
+                _module_params[key + "_rho"] = torch.nn.Parameter(
+                    torch.empty_like(_module_params[key + "_mean"])
+                )
         else:
-            rho = None
             for key, _ in module_params:
-                _module_params[key + "_mean"] = getattr(mu, key)
+                _module_params[key + "_mean"] = getattr(module, key)
                 _module_params[key + "_rho"] = None
-        self.mu = mu
-        self.rho = rho
+        self._module = module
         self._module_params = _module_params
 
         # Validate and set moment propagator.
@@ -406,7 +402,7 @@ class BayesianModule(BayesianModuleBase):
     @property
     def module_map(self) -> torch.nn.Module:
         """Return module instance with parameters set to learned means."""
-        return self.mu
+        return self._module
 
     @property
     def module_params(self) -> dict:
@@ -426,7 +422,7 @@ class BayesianModule(BayesianModuleBase):
     def module(self) -> torch.nn.Module:
         """Prepare a callable that acts like input `module` with random parameters."""
         return functools.partial(
-            torch.func.functional_call, self.mu, self.module_params
+            torch.func.functional_call, self._module, self.module_params
         )
 
     def __getattr__(self, name: str) -> Any:
