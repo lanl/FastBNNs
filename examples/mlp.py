@@ -25,7 +25,7 @@ nn = mlp.MLP(
     hidden_features=hidden_features,
     activation=torch.nn.LeakyReLU,
 )
-bnn = base.BNN(nn=nn, convert_in_place=False)
+bnn = base.BNN(model=nn, convert_in_place=False)
 device = torch.device("cuda")
 bnn = bnn.to(device)
 

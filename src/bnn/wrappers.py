@@ -124,7 +124,7 @@ def convert_to_bnn_(
         # Search for an appropriate module converter, in the following order of
         # priority:
         #   (1) Broadcast layer if tagged by broadcast_module_tags or listed
-        #       in PASSTHROUGH list.
+        #       in BROADCAST list.
         #   (2) Named converters if a wrapper exists with the same name as the
         #       module class.
         #   (3) BayesianModule
@@ -168,11 +168,11 @@ def convert_to_nn(
 
     # Replace Bayesian leaf modules with standard counterparts.
     for leaf in leaf_names:
-        # If `leaf` is a named `mu` parameter, we'll reset the module to the `mu` leaf.
+        # If `leaf` is a `_module`, we'll reset the module to the `_module` leaf.
         # If the module is a BroadcastModule, we just need to remove the wrapper.
         module = model.get_submodule(leaf)
         leaf_split = leaf.split(".")
-        if leaf_split[-1] == "mu":
+        if leaf_split[-1] == "_module":
             model.set_submodule(".".join(leaf_split[:-1]), module)
         elif isinstance(module, BroadcastModule):
             model.set_submodule(leaf, module.module)

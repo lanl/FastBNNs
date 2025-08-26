@@ -15,7 +15,7 @@ def test_bnn() -> None:
         torch.nn.LeakyReLU(),
         torch.nn.Linear(in_features=hidden_features, out_features=1),
     )
-    bnn = BNN(nn=nn, convert_in_place=False)
+    bnn = BNN(model=nn, convert_in_place=False)
 
     # Check that the forward pass behaves as expected.
     batch_size = 3

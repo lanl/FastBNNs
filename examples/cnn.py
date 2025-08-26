@@ -46,7 +46,7 @@ nn = torch.nn.Sequential(
 
 # Convert `nn` to a BNN, setting learn_var=False for the custom activation
 wrapper_kwargs = {"4": {"learn_var": False, "resample_mean": False}}
-bnn = base.BNN(nn=nn, convert_in_place=False, wrapper_kwargs=wrapper_kwargs)
+bnn = base.BNN(model=nn, convert_in_place=False, wrapper_kwargs=wrapper_kwargs)
 device = torch.device("cuda")
 bnn = bnn.to(device)
 

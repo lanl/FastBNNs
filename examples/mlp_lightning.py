@@ -23,7 +23,7 @@ nn = mlp.MLP(
     hidden_features=hidden_features,
     activation=torch.nn.LeakyReLU,
 )
-bnn = base.BNN(nn=nn)
+bnn = base.BNN(model=nn)
 
 # Define a prior (this one applies to all parameters in the model).
 prior = priors.Distribution(

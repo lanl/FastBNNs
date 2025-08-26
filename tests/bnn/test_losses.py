@@ -18,7 +18,7 @@ def test_losses() -> None:
     nn = torch.nn.Sequential(
         torch.nn.Linear(1, 1), torch.nn.LeakyReLU(), torch.nn.Linear(1, 1)
     )
-    model = bnn.base.BNN(nn=nn)
+    model = bnn.base.BNN(model=nn)
     loss = bnn.losses.KLDivergence(prior=prior)
     loss(model)
 
