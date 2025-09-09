@@ -27,27 +27,37 @@ def select_default_sigmas(
         n_sigma_points: Number of sigma points to return.  This must be an odd number.
         kappa: Spread parameter for sigma point selection.
     """
-
-    # Compute sigma points.
     assert (n_sigma_points // 2) != 0, "Input `n_sigma_points` must be an odd number."
-    sigma_points = torch.empty(
-        (n_sigma_points, *mu.shape), device=mu.device, dtype=mu.dtype
-    )
-    sigma_points[0] = mu.detach()
-    n = (n_sigma_points - 1) // 2
-    n_vec = torch.arange(1, 1 + n, device=mu.device)
-    sigma_points[1 : 1 + n] = mu + torch.sqrt(
-        torch.einsum("ij,j...->i...", n_vec[:, None] + kappa, var[None, ...])
-    )
-    sigma_points[1 + n :] = mu - torch.sqrt(
-        torch.einsum("ij,j...->i...", n_vec[:, None] + kappa, var[None, ...])
-    )
 
-    # Compute corresponding weights.
-    weights = torch.empty(n_sigma_points, device=mu.device, dtype=mu.dtype)
-    weights[0] = kappa / (n + kappa)
-    weights[1 : 1 + n] = 0.5 / (n_vec + kappa)
-    weights[1 + n :] = 0.5 / (n_vec + kappa)
+    # If n_sigma_points is 3 (common use case), run a faster branch.
+    n = (n_sigma_points - 1) // 2
+    if n_sigma_points == 3:
+        # Compute sigma points.
+        scaled_stdev = ((kappa + n) * var).sqrt()
+        sigma_points = torch.stack((mu, mu - scaled_stdev, mu + scaled_stdev))
+
+        # Compute corresponding weights.
+        weights = torch.empty(n_sigma_points, device=mu.device, dtype=mu.dtype)
+        weights[0] = kappa / (n + kappa)
+        weights[1:] = 0.5 / (n + kappa)
+    else:
+        # Compute sigma points.
+        sigma_points = torch.empty(
+            (n_sigma_points, *mu.shape), device=mu.device, dtype=mu.dtype
+        )
+        sigma_points[0] = mu
+        n_vec = torch.arange(1, 1 + n, device=mu.device)
+        scaled_stdev = (
+            (n_vec + kappa).reshape((n_vec.shape[0],) + (1,) * (var.ndim - 1)) * var
+        ).sqrt()
+        sigma_points[1 : 1 + n] = mu - scaled_stdev
+        sigma_points[1 + n :] = mu + scaled_stdev
+
+        # Compute corresponding weights.
+        weights = torch.empty(n_sigma_points, device=mu.device, dtype=mu.dtype)
+        weights[0] = kappa / (n + kappa)
+        weights[1 : 1 + n] = 0.5 / (n_vec + kappa)
+        weights[1 + n :] = 0.5 / (n_vec + kappa)
 
     return sigma_points, weights
 
@@ -140,17 +150,25 @@ class UnscentedTransform(MomentPropagator):
             # Perform n_module_samples unscented transforms and combine results.
             mu_samples = []
             var_samples = []
-            for _ in range(self.n_module_samples):
+            for n in range(self.n_module_samples):
+                # Prepare a sampled instance of the module.  For stochastic modules,
+                # module.module returns a new sample of weights each time, so
+                # we need to prepare the instance before running .forward() on each
+                # sigma point.
                 if hasattr(module, "module"):
                     module_sample = module.module
                 else:
                     module_sample = module
-                samples = torch.stack([module_sample(s.clone()) for s in sigma_points])
-                mu_samples.append(torch.einsum("i,i...->...", weights, samples))
-                var_samples.append(
-                    torch.einsum(
-                        "i,i...->...", weights, (samples - mu_samples[-1]) ** 2
+
+                # Forward pass through module and use unscented transform.
+                samples = torch.stack([module_sample(s) for s in sigma_points])
+                if n == 0:
+                    weights = weights.reshape(
+                        (weights.shape[0],) + (1,) * (samples.ndim - 1)
                     )
+                mu_samples.append((weights * samples).sum(dim=0))
+                var_samples.append(
+                    (weights * ((samples - mu_samples[-1]) ** 2)).sum(dim=0)
                 )
 
             # Combine estimates from each unscented transform using law of total
@@ -168,9 +186,10 @@ class UnscentedTransform(MomentPropagator):
                 module_sample = module.module
             else:
                 module_sample = module
-            samples = torch.stack([module_sample(s.clone()) for s in sigma_points])
-            mu = torch.einsum("i,i...->...", weights, samples)
-            var = torch.einsum("i,i...->...", weights, (samples - mu) ** 2)
+            samples = torch.stack([module_sample(s) for s in sigma_points])
+            weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
+            mu = (weights * samples).sum(dim=0)
+            var = (weights * ((samples - mu) ** 2)).sum(dim=0)
 
         if return_samples:
             return type(input)([mu, var]), samples
