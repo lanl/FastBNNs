@@ -144,9 +144,7 @@ class UnscentedTransform(MomentPropagator):
                     )
                 mu_samples.append((weights * samples).sum(dim=0))
                 var_samples.append(
-                    (weights * ((samples - mu_samples[-1]) ** 2))
-                    .sum(dim=0)(weights * ((samples - mu_samples[-1]) ** 2))
-                    .sum(dim=0)
+                    (weights * ((samples - mu_samples[-1]) ** 2)).sum(dim=0)
                 )
 
             # Combine estimates from each unscented transform using law of total
