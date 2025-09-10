@@ -7,36 +7,10 @@ for that layer if available.
 """
 
 from collections.abc import Callable, Iterable
-import functools
 from typing import List, Optional, Union
 
 import torch
 import torch.distributions as dist
-
-
-def select_default_sigmas(
-    mu: torch.Tensor, var: torch.Tensor, kappa: int = 2
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Select sigma points for use in the unscented transform as in [1].
-
-    [1] https://doi.org/10.1117/12.280797
-
-    Args:
-        mu: Mean values that will be propagated through the function of interest.
-        var: Variances that will be propagated through the function of interest.
-        kappa: Spread parameter for sigma point selection.
-    """
-    # Compute the sigma points.
-    scaled_stdev = ((kappa + 1) * var).sqrt()
-    sigma_points = torch.stack((mu, mu - scaled_stdev, mu + scaled_stdev))
-
-    # Compute the weights.
-    weights = torch.empty(3, device=mu.device, dtype=mu.dtype)
-    denom = kappa + 1
-    weights[0] = kappa / denom
-    weights[1:] = 0.5 / denom
-
-    return sigma_points, weights
 
 
 class MomentPropagator(torch.nn.Module):
@@ -90,23 +64,34 @@ class UnscentedTransform(MomentPropagator):
     """
 
     def __init__(
-        self, sigma_selector: Optional[Callable] = None, n_module_samples: int = 1
+        self,
+        sigma_scale: Optional[torch.Tensor] = None,
+        sigma_weights: Optional[torch.Tensor] = None,
+        n_module_samples: int = 1,
     ):
         """Initializer for UnscentedTransform inference module.
 
         Args:
-            sigma_selector: Callable that accepts input mean and variance and
-                returns the corresponding sigma points and weights used in the
-                unscented transform.
+            sigma_scale: Scale factor for sigma points mu -+ sigma_scale*var.sqrt().
+            sigma_weights: Weighting factors corresponding to sigma points.
             n_module_samples: Number of samples to make of the module itself.
                 This allows us to use the unscented transform through modules
                 which themselves are parametrized by random variables.
         """
         super().__init__()
 
-        if sigma_selector is None:
-            sigma_selector = functools.partial(select_default_sigmas, kappa=2)
-        self.sigma_selector = sigma_selector
+        # Set defaults as needed.
+        kappa = 2
+        if sigma_scale is None:
+            sigma_scale = torch.sqrt(torch.tensor(kappa + 1))
+        self.register_buffer("_scale", sigma_scale)
+
+        if sigma_weights is None:
+            sigma_weights = torch.tensor(
+                [kappa / (kappa + 1), 0.5 / (kappa + 1), 0.5 / (kappa + 1)]
+            )
+        self.register_buffer("_weights", sigma_weights)
+        self._weights = sigma_weights
 
         self.n_module_samples = n_module_samples
 
@@ -118,9 +103,13 @@ class UnscentedTransform(MomentPropagator):
     ) -> Union[Iterable, tuple]:
         """Propagate moments using the unscented transform."""
         # Select sigma points and reshape along batch dimension for batched eval.
-        sigma_points, weights = self.sigma_selector(mu=input[0], var=input[1])
+        scaled_stdev = self._scale * input[1].sqrt()
+        sigma_points = torch.stack(
+            (input[0], input[0] - scaled_stdev, input[0] + scaled_stdev)
+        )
         sp_shape = sigma_points.shape
         sigma_points = sigma_points.reshape(sp_shape[0] * sp_shape[1], *sp_shape[2:])
+        weights = self._weights
 
         # Propagate mean and variance.
         if self.n_module_samples > 1:
@@ -145,8 +134,19 @@ class UnscentedTransform(MomentPropagator):
                         (weights.shape[0],) + (1,) * (samples.ndim - 1)
                     )
                 mu_samples.append((weights * samples).sum(dim=0))
+
+                # Forward pass through module and use unscented transform.
+                samples = module_sample(sigma_points)
+                samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
+                if n == 0:
+                    weights = weights.reshape(
+                        (weights.shape[0],) + (1,) * (samples.ndim - 1)
+                    )
+                mu_samples.append((weights * samples).sum(dim=0))
                 var_samples.append(
-                    (weights * ((samples - mu_samples[-1]) ** 2)).sum(dim=0)
+                    (weights * ((samples - mu_samples[-1]) ** 2))
+                    .sum(dim=0)(weights * ((samples - mu_samples[-1]) ** 2))
+                    .sum(dim=0)
                 )
 
             # Combine estimates from each unscented transform using law of total
@@ -164,6 +164,13 @@ class UnscentedTransform(MomentPropagator):
                 module_sample = module.module
             else:
                 module_sample = module
+            samples = module_sample(sigma_points)
+
+            # Compute output mean and variance.
+            samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
+            weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
+            mu = (weights * samples).sum(dim=0)
+            var = (weights * ((samples - mu) ** 2)).sum(dim=0)
             samples = module_sample(sigma_points)
 
             # Compute output mean and variance.
