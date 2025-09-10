@@ -142,8 +142,10 @@ class UnscentedTransform(MomentPropagator):
         return_samples: bool = False,
     ) -> Union[Iterable, tuple]:
         """Propagate moments using the unscented transform."""
-        # Select sigma points.
+        # Select sigma points and reshape along batch dimension for batched eval.
         sigma_points, weights = self.sigma_selector(mu=input[0], var=input[1])
+        sp_shape = sigma_points.shape
+        sigma_points = sigma_points.reshape(sp_shape[0] * sp_shape[1], *sp_shape[2:])
 
         # Propagate mean and variance.
         if self.n_module_samples > 1:
@@ -161,7 +163,8 @@ class UnscentedTransform(MomentPropagator):
                     module_sample = module
 
                 # Forward pass through module and use unscented transform.
-                samples = torch.stack([module_sample(s) for s in sigma_points])
+                samples = module_sample(sigma_points)
+                samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
                 if n == 0:
                     weights = weights.reshape(
                         (weights.shape[0],) + (1,) * (samples.ndim - 1)
@@ -186,7 +189,10 @@ class UnscentedTransform(MomentPropagator):
                 module_sample = module.module
             else:
                 module_sample = module
-            samples = torch.stack([module_sample(s) for s in sigma_points])
+            samples = module_sample(sigma_points)
+
+            # Compute output mean and variance.
+            samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
             weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
             mu = (weights * samples).sum(dim=0)
             var = (weights * ((samples - mu) ** 2)).sum(dim=0)
