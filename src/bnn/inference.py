@@ -15,7 +15,7 @@ import torch.distributions as dist
 
 
 def select_default_sigmas(
-    mu: torch.Tensor, var: torch.Tensor, n_sigma_points: int = 3, kappa: int = 2
+    mu: torch.Tensor, var: torch.Tensor, kappa: int = 2
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Select sigma points for use in the unscented transform as in [1].
 
@@ -24,40 +24,17 @@ def select_default_sigmas(
     Args:
         mu: Mean values that will be propagated through the function of interest.
         var: Variances that will be propagated through the function of interest.
-        n_sigma_points: Number of sigma points to return.  This must be an odd number.
         kappa: Spread parameter for sigma point selection.
     """
-    assert (n_sigma_points // 2) != 0, "Input `n_sigma_points` must be an odd number."
+    # Compute the sigma points.
+    scaled_stdev = ((kappa + 1) * var).sqrt()
+    sigma_points = torch.stack((mu, mu - scaled_stdev, mu + scaled_stdev))
 
-    # If n_sigma_points is 3 (common use case), run a faster branch.
-    n = (n_sigma_points - 1) // 2
-    if n_sigma_points == 3:
-        # Compute sigma points.
-        scaled_stdev = ((kappa + n) * var).sqrt()
-        sigma_points = torch.stack((mu, mu - scaled_stdev, mu + scaled_stdev))
-
-        # Compute corresponding weights.
-        weights = torch.empty(n_sigma_points, device=mu.device, dtype=mu.dtype)
-        weights[0] = kappa / (n + kappa)
-        weights[1:] = 0.5 / (n + kappa)
-    else:
-        # Compute sigma points.
-        sigma_points = torch.empty(
-            (n_sigma_points, *mu.shape), device=mu.device, dtype=mu.dtype
-        )
-        sigma_points[0] = mu
-        n_vec = torch.arange(1, 1 + n, device=mu.device)
-        scaled_stdev = (
-            (n_vec + kappa).reshape((n_vec.shape[0],) + (1,) * (var.ndim - 1)) * var
-        ).sqrt()
-        sigma_points[1 : 1 + n] = mu - scaled_stdev
-        sigma_points[1 + n :] = mu + scaled_stdev
-
-        # Compute corresponding weights.
-        weights = torch.empty(n_sigma_points, device=mu.device, dtype=mu.dtype)
-        weights[0] = kappa / (n + kappa)
-        weights[1 : 1 + n] = 0.5 / (n_vec + kappa)
-        weights[1 + n :] = 0.5 / (n_vec + kappa)
+    # Compute the weights.
+    weights = torch.empty(3, device=mu.device, dtype=mu.dtype)
+    denom = kappa + 1
+    weights[0] = kappa / denom
+    weights[1:] = 0.5 / denom
 
     return sigma_points, weights
 
@@ -128,9 +105,7 @@ class UnscentedTransform(MomentPropagator):
         super().__init__()
 
         if sigma_selector is None:
-            sigma_selector = functools.partial(
-                select_default_sigmas, n_sigma_points=3, kappa=2
-            )
+            sigma_selector = functools.partial(select_default_sigmas, kappa=2)
         self.sigma_selector = sigma_selector
 
         self.n_module_samples = n_module_samples
