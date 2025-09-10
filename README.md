@@ -4,6 +4,17 @@
 FastBNNs implements fast and flexible Bayesian inference of neural networks based on propagation of statistical moments [1] and the unscented transform [2] in PyTorch.
 FastBNNs enables one-line conversion of many PyTorch-based models to Bayesian counterparts, whereby learnable model parameters are treated as Normal random variables.
 
+## Installation
+A [requirements.txt](requirements.txt) file is provided to support installation of FastBNNs.
+To install in a virtual environment, run
+
+```
+python -m venv .venv
+source .venv/bin/activate  # bash
+# .venv/Scripts/Activate.ps1  # Windows PowerShell
+pip install -r requirements.txt
+```
+
 ## Basic usage
 A neural network `nn: torch.nn.Module` can be converted to a Bayesian neural network using the
 `bnn.base.BNN` wrapper class (see [Caveats and known limitations](#caveats-and-known-limitations) for exceptions):
