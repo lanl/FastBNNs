@@ -80,7 +80,7 @@ class UnscentedTransform(MomentPropagator):
         """
         super().__init__()
 
-        # Set defaults as needed.
+        # Set defaults as needed (defaults chosen as in https://doi.org/10.1117/12.280797)
         kappa = 2
         if sigma_scale is None:
             sigma_scale = torch.sqrt(torch.tensor(kappa + 1))
