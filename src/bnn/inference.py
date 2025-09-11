@@ -153,9 +153,9 @@ class UnscentedTransform(MomentPropagator):
                 module_sample = module.module
             else:
                 module_sample = module
-            samples = module_sample(sigma_points)
 
             # Compute output mean and variance.
+            samples = module_sample(sigma_points)
             samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
             weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
             mu = (weights * samples).sum(dim=0)
