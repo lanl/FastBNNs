@@ -20,8 +20,6 @@ A neural network `nn: torch.nn.Module` can be converted to a Bayesian neural net
 `bnn.base.BNN` wrapper class (see [Caveats and known limitations](#caveats-and-known-limitations) for exceptions):
 
 ```
-n_features = 1
-out_features = 1
 hidden_features = 32
 n_hidden_layers = 1
 in_features = 1
@@ -39,7 +37,7 @@ bnn = bnn.base.BNN(nn=nn, convert_in_place=False)
 Forward calls through `bnn` can be made identically to `nn`:
 
 ```
-data = torch.randn((1, n_features), dtype=torch.float32)
+data = torch.randn((1, in_features), dtype=torch.float32)
 out_nn = nn(data)
 out_bnn = bnn(data)
 ```
