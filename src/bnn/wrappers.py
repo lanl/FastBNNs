@@ -138,6 +138,7 @@ def convert_to_bnn_(
         #       module class.
         #   (4) BayesianModule
         if wrapper := layer_wrappers.pop(leaf, None):
+            # Wrap module in user-specified wrapper.
             bayesian_layer = getattr(CURRENT_MODULE, wrapper)(
                 module=module, **module_kwargs
             )
@@ -146,7 +147,7 @@ def convert_to_bnn_(
         ):
             # This module can be broadcast along (mu, var) without additional
             # processing (e.g., a flatten layer, which only changes shapes).
-            bayesian_layer = BroadcastModule(module=module)
+            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
         elif hasattr(CURRENT_MODULE, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(CURRENT_MODULE, module_name)(
