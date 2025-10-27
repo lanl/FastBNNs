@@ -80,8 +80,8 @@ class MuVar:
             # Repackage for compatibility.
             self.mu_var = mu.mu_var
         elif var is None:
-            # Only mean was passed, default variance to 0.0.
-            self.mu_var = (mu, torch.zeros_like(mu))
+            # Only mean was passed, default variance to None.
+            self.mu_var = (mu, None)
         else:
             # Mu and var passed individually.
             self.mu_var = (mu, var)

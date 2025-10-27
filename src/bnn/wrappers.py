@@ -524,6 +524,10 @@ class BayesianModule(BayesianModuleBase):
     ) -> Union[MuVar, torch.Tensor]:
         """Forward pass through layer."""
         if isinstance(input, MuVar):
+            # If the input has no variance, set to zero before propagating.
+            if input[1] is None:
+                input = MuVar(input[0], torch.zeros_like(input[0]))
+
             # Propagate mean and variance through layer.
             out = self.moment_propagator(
                 module=self,
@@ -567,7 +571,11 @@ class BroadcastModule(torch.nn.Module):
         """Forward pass through layer."""
         if isinstance(input, MuVar):
             # Propagate mean and variance through layer.
-            out = MuVar(self.module(input[0]), self.module(input[1]))
+            if input[1] is None:
+                # No input variance so we only need to operate on mean.
+                out = MuVar(self.module(input[0]), None)
+            else:
+                out = MuVar(self.module(input[0]), self.module(input[1]))
         else:
             # Compute forward pass with a random sample of parameters.
             out = self.module(input)
