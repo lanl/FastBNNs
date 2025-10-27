@@ -25,11 +25,11 @@ BROADCAST = [
     "Identity",
     "Flatten",
     "Unflatten",
-    *[f"ReflectionPad{n+1}d" for n in range(3)],
-    *[f"ReplicationPad{n+1}d" for n in range(3)],
-    *[f"ZeroPad{n+1}d" for n in range(3)],
-    *[f"ConstantPad{n+1}d" for n in range(3)],
-    *[f"CircularPad{n+1}d" for n in range(3)],
+    *[f"ReflectionPad{n + 1}d" for n in range(3)],
+    *[f"ReplicationPad{n + 1}d" for n in range(3)],
+    *[f"ZeroPad{n + 1}d" for n in range(3)],
+    *[f"ConstantPad{n + 1}d" for n in range(3)],
+    *[f"CircularPad{n + 1}d" for n in range(3)],
 ]
 
 
@@ -68,15 +68,18 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
     """Prepare a list of leaf modules of `model`.
 
     This function filters `module_names` to eliminate the names of parent modules.
-    For example, if we have a model: torch.nn.Module and call [p]
+    For example, if we have a model: torch.nn.Module with named modules
+    m = ["", "module1", "module2", "module1.submodule", "module2.submodule"],
+    isolate_leaf_module_names(m) == ["module1.submodule", "module2.submodule"]
     """
     leaf_names = []
+    module_names.remove("")  # remove root module empty string
     for module in module_names[::-1]:
         # If other modules are a prefix of this modules name, we'll assume they
         # are this modules parent (hence not a leaf module).
         children = []
         for leaf in leaf_names:
-            matches = re.match(f"{module}.*", leaf)
+            matches = re.match(f"{module}\..*", leaf)
             if matches is not None:
                 children.append(matches)
         if len(children) == 0:
@@ -101,7 +104,7 @@ def convert_to_bnn_(
             Converter(module1, **wrapper_kwargs["module1"]) where
             Converter is a module converter.
         wrapper_kwargs_global: Keyword arguments that we'll merge
-            with values of bayesian_module_kwargs as, e.g.,
+            with values of wrapper_kwargs as, e.g.,
             Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
         broadcast_module_tags: List of strings that, if present in the class
             name of a module, will indicate the module should be treated as a
@@ -133,7 +136,7 @@ def convert_to_bnn_(
         ):
             # This module can be broadcast along (mu, var) without additional
             # processing (e.g., a flatten layer, which only changes shapes).
-            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
+            bayesian_layer = BroadcastModule(module=module)
         elif hasattr(CURRENT_MODULE, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(CURRENT_MODULE, module_name)(
@@ -168,11 +171,11 @@ def convert_to_nn(
 
     # Replace Bayesian leaf modules with standard counterparts.
     for leaf in leaf_names:
-        # If `leaf` is a named `mu` parameter, we'll reset the module to the `mu` leaf.
+        # If `leaf` is a named `_module` parameter, we'll reset the module to the `_module` leaf.
         # If the module is a BroadcastModule, we just need to remove the wrapper.
         module = model.get_submodule(leaf)
         leaf_split = leaf.split(".")
-        if leaf_split[-1] == "mu":
+        if leaf_split[-1] == "_module":
             model.set_submodule(".".join(leaf_split[:-1]), module)
         elif isinstance(module, BroadcastModule):
             model.set_submodule(leaf, module.module)
