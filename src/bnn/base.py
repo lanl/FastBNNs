@@ -19,7 +19,7 @@ class BNN(torch.nn.Module):
     def __init__(
         self,
         nn: torch.nn.Module,
-        convert_in_place: bool = True,
+        convert_in_place: bool = False,
         *args,
         **kwargs,
     ):
@@ -81,7 +81,7 @@ class BNN(torch.nn.Module):
         for n, param in enumerate(model.named_parameters()):
             name_split = param[0].split(".")
             base_name = (
-                f'bnn.{".".join(name_split[:-1])}._module_params.{name_split[-1]}'
+                f"bnn.{'.'.join(name_split[:-1])}._module_params.{name_split[-1]}"
             )
             param_dict[base_name + "_mean"] = la.params[n]
             param_dict[base_name + "_rho"] = inv_scale_tform(
