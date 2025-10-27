@@ -90,6 +90,7 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
 
 def convert_to_bnn_(
     model: torch.nn.Module,
+    layer_wrappers: dict = {},
     wrapper_kwargs: dict = {},
     wrapper_kwargs_global: dict = {},
     broadcast_module_tags: Union[list, tuple] = (),
@@ -98,6 +99,10 @@ def convert_to_bnn_(
 
     Args:
         model: Model to be converted to Bayesian counterpart.
+        layer_wrappers: Dictionary of manually-specified wrappers for specific
+            module layers. The keys are names of leaf modules (e.g.,
+            "module1.layer1") and the values are the corresponding wrapper
+            class present in this module (e.g., "BroadcastModule").
         wrapper_kwargs: Additional keyword arguments passed to
             initialization of named Bayesian layers.  For example, if `model`
             has a module named "module1", we'll convert "module1" as
@@ -126,12 +131,17 @@ def convert_to_bnn_(
 
         # Search for an appropriate module converter, in the following order of
         # priority:
-        #   (1) Broadcast layer if tagged by broadcast_module_tags or listed
+        #   (1) User-specified wrapper designated in `layer_wrappers`.
+        #   (2) Broadcast layer if tagged by broadcast_module_tags or listed
         #       in PASSTHROUGH list.
-        #   (2) Named converters if a wrapper exists with the same name as the
+        #   (3) Named converters if a wrapper exists with the same name as the
         #       module class.
-        #   (3) BayesianModule
-        if (module_name in BROADCAST) or any(
+        #   (4) BayesianModule
+        if wrapper := layer_wrappers.pop(leaf, None):
+            bayesian_layer = getattr(CURRENT_MODULE, wrapper)(
+                module=module, **module_kwargs
+            )
+        elif (module_name in BROADCAST) or any(
             [tag in module_name for tag in broadcast_module_tags]
         ):
             # This module can be broadcast along (mu, var) without additional
