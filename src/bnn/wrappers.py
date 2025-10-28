@@ -558,7 +558,7 @@ class BroadcastModule(torch.nn.Module):
                 output of the previous layer is a MuVar type, module is
                 simply broadcast across both elements of MuVar.
         """
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.__name__ = module.__class__.__name__
         self.module = module
 
