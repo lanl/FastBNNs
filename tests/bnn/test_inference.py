@@ -16,7 +16,10 @@ def test_inference() -> None:
     bayes_module = bnn.wrappers.BayesianModule(module, learn_var=False)
     batch_size = 4
     in_features = 3
-    x = bnn.types.MuVar(torch.randn((batch_size, in_features)))
+    x = bnn.types.MuVar(
+        torch.randn((batch_size, in_features)),
+        torch.randn((batch_size, in_features)).abs(),
+    )
     propagators = [
         bnn.inference.BasicPropagator(),
         bnn.inference.MonteCarlo(),
@@ -56,12 +59,12 @@ def test_inference() -> None:
 
         # Verify outputs are consistent with manual Monte Carlo result.
         tol = 1e-1  # chosen empirically
-        assert (
-            out[0] - out_mc_mean
-        ).abs() < tol, f"{type(propagator).__name__} not returning expected mean!"
-        assert (
-            out[1].sqrt() - out_mc_stdev
-        ).abs() < tol, f"{type(propagator).__name__} not returning expected variance!"
+        assert (out[0] - out_mc_mean).abs() < tol, (
+            f"{type(propagator).__name__} not returning expected mean!"
+        )
+        assert (out[1].sqrt() - out_mc_stdev).abs() < tol, (
+            f"{type(propagator).__name__} not returning expected variance!"
+        )
 
     # Test the Linear layer propagator.
     in_features = 3
