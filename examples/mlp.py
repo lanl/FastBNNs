@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from analysis import statistics
-from bnn import base, losses, priors, types
-from datasets import polynomial
-from models import mlp
-from simulation import generators, polynomials, observation
+from fastbnns.analysis import statistics
+from fastbnns.bnn import base, losses, priors, types
+from fastbnns.datasets import polynomial
+from fastbnns.models import mlp
+from fastbnns.simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.
@@ -99,7 +99,7 @@ for epoch in range(n_epochs):
         best_loss = avg_loss
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
     print(
-        f"epoch {epoch+1} of {n_epochs}: loss = {avg_loss}, {100.0*np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
+        f"epoch {epoch + 1} of {n_epochs}: loss = {avg_loss}, {100.0 * np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
     )
 
 # Plot some examples.

@@ -11,11 +11,11 @@ import numpy as np
 import torch
 import torch.distributions as dist
 
-import bnn.inference
-from bnn.inference import MomentPropagator
-from bnn.losses import kl_divergence_sampled
-from bnn.priors import Distribution
-from bnn.types import MuVar
+from . import inference
+from .inference import MomentPropagator
+from .losses import kl_divergence_sampled
+from .priors import Distribution
+from .types import MuVar
 
 
 # Define layers that can be applied to input mean and variance without additional
@@ -46,20 +46,20 @@ def select_default_propagator(
         is_bayesian: Flag indicating parameters of `module` will be treated
             as distributions.
     """
-    if hasattr(bnn.inference, module.__class__.__name__):
+    if hasattr(inference, module.__class__.__name__):
         # A custom propagator exists for this module so we'll use that.
-        propagator = getattr(bnn.inference, module.__class__.__name__)
+        propagator = getattr(inference, module.__class__.__name__)
         moment_propagator = propagator()
     elif not is_bayesian or (
         len([p for p in module.parameters() if p.requires_grad]) == 0
     ):
         # If this module doesn't have learnable parameters we'll
         # default to the unscented transform.
-        moment_propagator = bnn.inference.UnscentedTransform()
+        moment_propagator = inference.UnscentedTransform()
     else:
         # With learnable Bayesian parameters, we'll default to
         # Monte Carlo sampling.
-        moment_propagator = bnn.inference.MonteCarlo()
+        moment_propagator = inference.MonteCarlo()
 
     return moment_propagator
 
@@ -586,7 +586,7 @@ class BroadcastModule(torch.nn.Module):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    from bnn.inference import Linear
+    from inference import Linear
 
     # Basic usage example of BayesianLinear.
     in_features = 3
@@ -600,7 +600,7 @@ if __name__ == "__main__":
     n_samples = 100
     bayesian_linear_mc = BayesianModule(
         module=linear,
-        moment_propagator=bnn.inference.MonteCarlo(n_samples=n_samples),
+        moment_propagator=inference.MonteCarlo(n_samples=n_samples),
     )  # computes moments from Monte Carlo without returning actual samples
     bayesian_linear_mc.load_state_dict(bayesian_linear.state_dict())
 

@@ -9,11 +9,11 @@ import numpy as np
 import torch
 from torchvision.transforms import v2
 
-from models.activations import InverseTransformSampling
-from analysis import statistics
-from bnn import base, losses, priors, types
-from datasets import generic
-from simulation import generators, images, observation
+from fastbnns.models.activations import InverseTransformSampling
+from fastbnns.analysis import statistics
+from fastbnns.bnn import base, losses, priors, types
+from fastbnns.datasets import generic
+from fastbnns.simulation import generators, images, observation
 
 
 # Create a CNN to predict location of a blob in an image.
@@ -180,7 +180,7 @@ for epoch in range(n_epochs):
         best_loss = avg_loss_val
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
     print(
-        f"epoch {epoch+1} of {n_epochs}: train loss = {avg_loss_train:.2f}, val loss = {avg_loss_val:.2f}, {100.0*np.mean(within_1sigma_val):.2f}% within 1 st. dev."
+        f"epoch {epoch + 1} of {n_epochs}: train loss = {avg_loss_train:.2f}, val loss = {avg_loss_val:.2f}, {100.0 * np.mean(within_1sigma_val):.2f}% within 1 st. dev."
     )
 
 ## Plot some examples.

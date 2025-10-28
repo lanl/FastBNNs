@@ -2,7 +2,7 @@
 
 import torch
 
-import bnn.priors
+from fastbnns.bnn.priors import Distribution, SpikeSlab
 
 
 def test_priors() -> None:
@@ -10,16 +10,14 @@ def test_priors() -> None:
     # Test distribution wrapper.
     loc = torch.tensor(0.0)
     scale = torch.tensor(1.0)
-    dist = bnn.priors.Distribution(
-        distribution=torch.distributions.Normal(loc=loc, scale=scale)
-    )
+    dist = Distribution(distribution=torch.distributions.Normal(loc=loc, scale=scale))
     dist.sample()
     assert dist.log_prob(x=loc) == torch.log(
         1.0 / torch.sqrt(2.0 * torch.pi * (scale**2))
     ), """log_prob(x=loc) not returning expected result!"""
 
     # Test the SpikeSlab prior.
-    dist = bnn.priors.SpikeSlab(
+    dist = SpikeSlab(
         loc=torch.tensor([0.0, 0.0]),
         scale=torch.tensor([0.1, 1.0]),
         probs=torch.tensor([0.5, 0.5]),

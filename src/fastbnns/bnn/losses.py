@@ -7,7 +7,7 @@ import torch
 import torch.distributions as dist
 from torch.nn.modules.loss import _Loss
 
-from bnn import priors
+from . import priors
 
 
 def kl_divergence_sampled(

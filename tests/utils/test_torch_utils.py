@@ -2,7 +2,7 @@
 
 import torch
 
-from utils.torch_utils import set_requires_grad_
+from fastbnns.utils.torch_utils import set_requires_grad_
 
 
 def test_set_requires_grad_() -> None:
