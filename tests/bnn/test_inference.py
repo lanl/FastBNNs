@@ -72,7 +72,10 @@ def test_inference() -> None:
     # Test the Linear layer propagator.
     in_features = 3
     out_features = 2
-    x = bnn.types.MuVar(torch.randn((batch_size, in_features)))
+    x = bnn.types.MuVar(
+        torch.randn((batch_size, in_features)),
+        torch.randn((batch_size, in_features)).abs(),
+    )
     module = torch.nn.Linear(in_features=in_features, out_features=out_features)
     bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
     propagator = bnn.inference.Linear()
@@ -90,7 +93,10 @@ def test_inference() -> None:
         x = bnn.types.MuVar(
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
-            )
+            ),
+            torch.randn(
+                (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
+            ).abs(),
         )
         module = getattr(torch.nn, f"Conv{n_dim[n]}d")(
             in_channels=in_features,
@@ -113,7 +119,10 @@ def test_inference() -> None:
         x = bnn.types.MuVar(
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
-            )
+            ),
+            torch.randn(
+                (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
+            ).abs(),
         )
         module = getattr(torch.nn, f"ConvTranspose{n_dim[n]}d")(
             in_channels=in_features,
