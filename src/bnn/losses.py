@@ -91,7 +91,7 @@ class BNNLoss(ABC, _Loss):
         pass
 
 
-class ELBO(_Loss):
+class ELBO(BNNLoss):
     """Evidence lower bound with scaled KL."""
 
     def __init__(

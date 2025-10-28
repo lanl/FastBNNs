@@ -4,13 +4,12 @@ import copy
 from functools import partial
 from typing import Any, Callable, Iterator, Union
 
-import laplace
 import lightning as L
 import torch
 
 from bnn.losses import BNNLoss
 from bnn.types import MuVar
-from bnn.wrappers import convert_to_bnn_, convert_to_nn
+from bnn.wrappers import convert_to_bnn_
 
 
 class BNN(torch.nn.Module):
@@ -19,7 +18,7 @@ class BNN(torch.nn.Module):
     def __init__(
         self,
         nn: torch.nn.Module,
-        convert_in_place: bool = True,
+        convert_in_place: bool = False,
         *args,
         **kwargs,
     ):
@@ -56,41 +55,6 @@ class BNN(torch.nn.Module):
         for name, param in self.named_parameters():
             if tag in name:
                 yield name, param
-
-    def laplace_init(
-        self, dataloader: torch.utils.data.DataLoader, laplace_kwargs: dict = {}
-    ) -> None:
-        """Initialize model parameter variances to Laplace approximated values."""
-        # Define default arguments for DiagLaplace.
-        laplace_kwargs_default = {"likelihood": "regression", "prior_precision": 0.0}
-        laplace_kwargs = laplace_kwargs_default | laplace_kwargs
-
-        # Compute Laplace approximation.
-        model = convert_to_nn(self.bnn)
-        la = laplace.DiagLaplace(model, **laplace_kwargs)
-        la.fit(dataloader)
-
-        # Define an inverse scale transform to convert scale parameters
-        # (st. dev. from Laplace approximation) to `rho` parameters learned by the BNN.
-        def inv_scale_tform(scale: torch.Tensor) -> torch.Tensor:
-            return torch.log(torch.exp(scale) - 1.0)
-
-        # Remap LA parameters to model parameters (la.params shares ordering of model.named_parameters()).
-        param_dict = {}
-        var_ind = 0  # pointer to track start of variances for each parameter
-        for n, param in enumerate(model.named_parameters()):
-            name_split = param[0].split(".")
-            base_name = (
-                f'bnn.{".".join(name_split[:-1])}._module_params.{name_split[-1]}'
-            )
-            param_dict[base_name + "_mean"] = la.params[n]
-            param_dict[base_name + "_rho"] = inv_scale_tform(
-                la.posterior_scale[var_ind : (var_ind + la.params[n].numel())]
-            ).reshape(la.params[n].shape)
-            var_ind += la.params[n].numel()
-
-        # Load LA parameters into model.
-        self.bnn.load_state_dict(param_dict, strict=False)
 
     def forward(self, input: Union[MuVar, torch.Tensor], *args, **kwargs) -> Any:
         """Forward pass through BNN."""

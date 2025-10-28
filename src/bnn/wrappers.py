@@ -25,11 +25,11 @@ BROADCAST = [
     "Identity",
     "Flatten",
     "Unflatten",
-    *[f"ReflectionPad{n+1}d" for n in range(3)],
-    *[f"ReplicationPad{n+1}d" for n in range(3)],
-    *[f"ZeroPad{n+1}d" for n in range(3)],
-    *[f"ConstantPad{n+1}d" for n in range(3)],
-    *[f"CircularPad{n+1}d" for n in range(3)],
+    *[f"ReflectionPad{n + 1}d" for n in range(3)],
+    *[f"ReplicationPad{n + 1}d" for n in range(3)],
+    *[f"ZeroPad{n + 1}d" for n in range(3)],
+    *[f"ConstantPad{n + 1}d" for n in range(3)],
+    *[f"CircularPad{n + 1}d" for n in range(3)],
 ]
 
 
@@ -68,15 +68,18 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
     """Prepare a list of leaf modules of `model`.
 
     This function filters `module_names` to eliminate the names of parent modules.
-    For example, if we have a model: torch.nn.Module and call [p]
+    For example, if we have a model: torch.nn.Module with named modules
+    m = ["", "module1", "module2", "module1.submodule", "module2.submodule"],
+    isolate_leaf_module_names(m) == ["module1.submodule", "module2.submodule"]
     """
     leaf_names = []
+    module_names.remove("")  # remove root module empty string
     for module in module_names[::-1]:
         # If other modules are a prefix of this modules name, we'll assume they
         # are this modules parent (hence not a leaf module).
         children = []
         for leaf in leaf_names:
-            matches = re.match(f"{module}.*", leaf)
+            matches = re.match(f"{module}\..*", leaf)
             if matches is not None:
                 children.append(matches)
         if len(children) == 0:
@@ -87,6 +90,7 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
 
 def convert_to_bnn_(
     model: torch.nn.Module,
+    layer_wrappers: dict = {},
     wrapper_kwargs: dict = {},
     wrapper_kwargs_global: dict = {},
     broadcast_module_tags: Union[list, tuple] = (),
@@ -95,13 +99,17 @@ def convert_to_bnn_(
 
     Args:
         model: Model to be converted to Bayesian counterpart.
+        layer_wrappers: Dictionary of manually-specified wrappers for specific
+            module layers. The keys are names of leaf modules (e.g.,
+            "module1.layer1") and the values are the corresponding wrapper
+            class present in this module (e.g., "BroadcastModule").
         wrapper_kwargs: Additional keyword arguments passed to
             initialization of named Bayesian layers.  For example, if `model`
             has a module named "module1", we'll convert "module1" as
             Converter(module1, **wrapper_kwargs["module1"]) where
             Converter is a module converter.
         wrapper_kwargs_global: Keyword arguments that we'll merge
-            with values of bayesian_module_kwargs as, e.g.,
+            with values of wrapper_kwargs as, e.g.,
             Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
         broadcast_module_tags: List of strings that, if present in the class
             name of a module, will indicate the module should be treated as a
@@ -123,12 +131,18 @@ def convert_to_bnn_(
 
         # Search for an appropriate module converter, in the following order of
         # priority:
-        #   (1) Broadcast layer if tagged by broadcast_module_tags or listed
+        #   (1) User-specified wrapper designated in `layer_wrappers`.
+        #   (2) Broadcast layer if tagged by broadcast_module_tags or listed
         #       in PASSTHROUGH list.
-        #   (2) Named converters if a wrapper exists with the same name as the
+        #   (3) Named converters if a wrapper exists with the same name as the
         #       module class.
-        #   (3) BayesianModule
-        if (module_name in BROADCAST) or any(
+        #   (4) BayesianModule
+        if wrapper := layer_wrappers.pop(leaf, None):
+            # Wrap module in user-specified wrapper.
+            bayesian_layer = getattr(CURRENT_MODULE, wrapper)(
+                module=module, **module_kwargs
+            )
+        elif (module_name in BROADCAST) or any(
             [tag in module_name for tag in broadcast_module_tags]
         ):
             # This module can be broadcast along (mu, var) without additional
@@ -168,11 +182,11 @@ def convert_to_nn(
 
     # Replace Bayesian leaf modules with standard counterparts.
     for leaf in leaf_names:
-        # If `leaf` is a named `mu` parameter, we'll reset the module to the `mu` leaf.
+        # If `leaf` is a named `_module` parameter, we'll reset the module to the `_module` leaf.
         # If the module is a BroadcastModule, we just need to remove the wrapper.
         module = model.get_submodule(leaf)
         leaf_split = leaf.split(".")
-        if leaf_split[-1] == "mu":
+        if leaf_split[-1] == "_module":
             model.set_submodule(".".join(leaf_split[:-1]), module)
         elif isinstance(module, BroadcastModule):
             model.set_submodule(leaf, module.module)
@@ -510,6 +524,10 @@ class BayesianModule(BayesianModuleBase):
     ) -> Union[MuVar, torch.Tensor]:
         """Forward pass through layer."""
         if isinstance(input, MuVar):
+            # If the input has no variance, set to zero before propagating.
+            if input[1] is None:
+                input = MuVar(input[0], torch.zeros_like(input[0]))
+
             # Propagate mean and variance through layer.
             out = self.moment_propagator(
                 module=self,
@@ -540,7 +558,7 @@ class BroadcastModule(torch.nn.Module):
                 output of the previous layer is a MuVar type, module is
                 simply broadcast across both elements of MuVar.
         """
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.__name__ = module.__class__.__name__
         self.module = module
 
@@ -553,7 +571,11 @@ class BroadcastModule(torch.nn.Module):
         """Forward pass through layer."""
         if isinstance(input, MuVar):
             # Propagate mean and variance through layer.
-            out = MuVar(self.module(input[0]), self.module(input[1]))
+            if input[1] is None:
+                # No input variance so we only need to operate on mean.
+                out = MuVar(self.module(input[0]), None)
+            else:
+                out = MuVar(self.module(input[0]), self.module(input[1]))
         else:
             # Compute forward pass with a random sample of parameters.
             out = self.module(input)

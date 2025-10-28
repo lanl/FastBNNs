@@ -1,4 +1,4 @@
-"""Simple MLP PyTorch models."""
+"""Simple CNN PyTorch models."""
 
 from typing import Union
 
@@ -62,7 +62,7 @@ class CNN(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    # Basic MLP usage example.
+    # Basic CNN usage example.
     in_channels = 1
     out_channels = 1
     network = CNN(in_channels=in_channels, out_channels=out_channels)

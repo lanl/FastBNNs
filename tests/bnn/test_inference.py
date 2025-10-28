@@ -16,7 +16,10 @@ def test_inference() -> None:
     bayes_module = bnn.wrappers.BayesianModule(module, learn_var=False)
     batch_size = 4
     in_features = 3
-    x = bnn.types.MuVar(torch.randn((batch_size, in_features)))
+    x = bnn.types.MuVar(
+        torch.randn((batch_size, in_features)),
+        torch.zeros((batch_size, in_features)),
+    )
     propagators = [
         bnn.inference.BasicPropagator(),
         bnn.inference.MonteCarlo(),
@@ -34,7 +37,10 @@ def test_inference() -> None:
     bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
     batch_size = 1
     in_features = 1
-    x = bnn.types.MuVar(torch.randn((batch_size, in_features)))
+    x = bnn.types.MuVar(
+        torch.randn((batch_size, in_features)),
+        torch.zeros((batch_size, in_features)),
+    )
     n_samples = 100
     propagators = [
         bnn.inference.BasicPropagator(),
@@ -55,18 +61,21 @@ def test_inference() -> None:
         ], f"Outputs of `{type(propagator).__name__}` not expected shape!"
 
         # Verify outputs are consistent with manual Monte Carlo result.
-        tol = 1e-1  # chosen empirically
-        assert (
-            out[0] - out_mc_mean
-        ).abs() < tol, f"{type(propagator).__name__} not returning expected mean!"
-        assert (
-            out[1].sqrt() - out_mc_stdev
-        ).abs() < tol, f"{type(propagator).__name__} not returning expected variance!"
+        tol = 1.0e-1  # chosen empirically
+        assert (out[0] - out_mc_mean).abs() < tol, (
+            f"{type(propagator).__name__} not returning expected mean!"
+        )
+        assert (out[1].sqrt() - out_mc_stdev).abs() < tol, (
+            f"{type(propagator).__name__} not returning expected variance!"
+        )
 
     # Test the Linear layer propagator.
     in_features = 3
     out_features = 2
-    x = bnn.types.MuVar(torch.randn((batch_size, in_features)))
+    x = bnn.types.MuVar(
+        torch.randn((batch_size, in_features)),
+        torch.zeros((batch_size, in_features)),
+    )
     module = torch.nn.Linear(in_features=in_features, out_features=out_features)
     bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
     propagator = bnn.inference.Linear()
@@ -84,7 +93,10 @@ def test_inference() -> None:
         x = bnn.types.MuVar(
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
-            )
+            ),
+            torch.zeros(
+                (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
+            ),
         )
         module = getattr(torch.nn, f"Conv{n_dim[n]}d")(
             in_channels=in_features,
@@ -107,7 +119,10 @@ def test_inference() -> None:
         x = bnn.types.MuVar(
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
-            )
+            ),
+            torch.zeros(
+                (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
+            ),
         )
         module = getattr(torch.nn, f"ConvTranspose{n_dim[n]}d")(
             in_channels=in_features,
@@ -121,3 +136,7 @@ def test_inference() -> None:
             out_features,
             *[kernel_size + in_features - 1 for _ in range(n_dim[n])],
         ], f"Outputs of `{type(propagator).__name__}` not expected shape!"
+
+
+if __name__ == "__main__":
+    test_inference()
