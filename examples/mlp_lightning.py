@@ -7,7 +7,7 @@ import torch
 
 from fastbnns.bnn import base, losses, priors, types
 from fastbnns.datasets import polynomial
-from fastbnns.models import mlp
+from fastbnns.models import lightning_wrappers, mlp
 from fastbnns.simulation import generators, polynomials, observation
 
 
@@ -58,7 +58,7 @@ loss_fn = losses.ELBO(
 )
 
 # Prepare a Lightning module.
-bnn_lightning = base.BNNLightning(bnn=bnn, loss=loss_fn)
+bnn_lightning = lightning_wrappers.BNNLightning(bnn=bnn, loss=loss_fn)
 
 # Train.
 n_epochs = 100

@@ -5,7 +5,21 @@ FastBNNs implements fast and flexible Bayesian inference of neural networks base
 FastBNNs enables one-line conversion of many PyTorch-based models to Bayesian counterparts, whereby learnable model parameters are treated as Normal random variables.
 
 ## Installation
-A [requirements.txt](requirements.txt) file is provided to support installation of FastBNNs.
+FastBNNs is primarily built around PyTorch.
+To install FastBNNs, first install PyTorch
+
+```
+pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu129
+```
+
+then install FastBNNs as 
+
+```
+pip install fastbnns
+```
+
+
+Alternatively, a [requirements.txt](requirements.txt) file is provided to support installation of FastBNNs.
 To install in a virtual environment, run
 
 ```
