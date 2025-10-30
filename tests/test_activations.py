@@ -2,7 +2,7 @@
 
 import torch
 
-from models.activations import InverseTransformSampling, scaled_sigmoid
+from fastbnns.models.activations import InverseTransformSampling, scaled_sigmoid
 
 
 def test_scaled_sigmoid() -> None:
@@ -12,9 +12,9 @@ def test_scaled_sigmoid() -> None:
     alpha = torch.tensor([1.0, 2.0, 3.0])
     y_expected = torch.tensor([0.5000, 0.8808, 0.9975])
     y = scaled_sigmoid(x=x, alpha=alpha)
-    assert (
-        torch.abs(y_expected - y) < 1.0e-3
-    ).all(), "Output of `scaled_sigmoid` not matching expected results!"
+    assert (torch.abs(y_expected - y) < 1.0e-3).all(), (
+        "Output of `scaled_sigmoid` not matching expected results!"
+    )
 
 
 def test_inverse_tform_activation() -> None:
@@ -27,6 +27,6 @@ def test_inverse_tform_activation() -> None:
     x = torch.tensor([0.0000, 0.4001, 1.2276])
     y_expected = torch.tensor([0.0000, 0.2500, 0.7501])
     y = activation(x)
-    assert (
-        torch.abs(y_expected - y) < 1.0e-3
-    ).all(), "Output of `InverseTransformSampling` forward pass not matching expected results!"
+    assert (torch.abs(y_expected - y) < 1.0e-3).all(), (
+        "Output of `InverseTransformSampling` forward pass not matching expected results!"
+    )

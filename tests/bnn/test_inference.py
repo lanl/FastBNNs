@@ -2,28 +2,34 @@
 
 import torch
 
-import bnn.inference
-import bnn.types
-import bnn.wrappers
-import models.polynomial
+import fastbnns.bnn.inference as inference
+from fastbnns.bnn.inference import (
+    BasicPropagator,
+    Linear,
+    MonteCarlo,
+    UnscentedTransform,
+)
+from fastbnns.bnn.types import MuVar
+from fastbnns.bnn.wrappers import BayesianModule
+from fastbnns.models.polynomial import PolyModule
 
 
 def test_inference() -> None:
     """Test inference wrappers with simple example modules."""
     # Test the generic inference modules on a basic module.
     torch.manual_seed(12)
-    module = models.polynomial.PolyModule(poly_order=2)
-    bayes_module = bnn.wrappers.BayesianModule(module, learn_var=False)
+    module = PolyModule(poly_order=2)
+    bayes_module = BayesianModule(module, learn_var=False)
     batch_size = 4
     in_features = 3
-    x = bnn.types.MuVar(
+    x = MuVar(
         torch.randn((batch_size, in_features)),
         torch.zeros((batch_size, in_features)),
     )
     propagators = [
-        bnn.inference.BasicPropagator(),
-        bnn.inference.MonteCarlo(),
-        bnn.inference.UnscentedTransform(),
+        BasicPropagator(),
+        MonteCarlo(),
+        UnscentedTransform(),
     ]
     for propagator in propagators:
         out = propagator(module=bayes_module, input=x)
@@ -33,19 +39,19 @@ def test_inference() -> None:
         ], f"Outputs of `{type(propagator).__name__}` not expected shape!"
 
     # Test generic inference modules for a module with learnable variance.
-    module = models.polynomial.PolyModule(poly_order=2)
-    bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
+    module = PolyModule(poly_order=2)
+    bayes_module = BayesianModule(module, learn_var=True)
     batch_size = 1
     in_features = 1
-    x = bnn.types.MuVar(
+    x = MuVar(
         torch.randn((batch_size, in_features)),
         torch.zeros((batch_size, in_features)),
     )
     n_samples = 100
     propagators = [
-        bnn.inference.BasicPropagator(),
-        bnn.inference.MonteCarlo(n_samples=n_samples),
-        bnn.inference.UnscentedTransform(),
+        BasicPropagator(),
+        MonteCarlo(n_samples=n_samples),
+        UnscentedTransform(),
     ]
     out_mc_manual = torch.stack([bayes_module(x[0]) for _ in range(n_samples)])
     out_mc_mean = out_mc_manual.mean()
@@ -72,13 +78,13 @@ def test_inference() -> None:
     # Test the Linear layer propagator.
     in_features = 3
     out_features = 2
-    x = bnn.types.MuVar(
+    x = MuVar(
         torch.randn((batch_size, in_features)),
         torch.zeros((batch_size, in_features)),
     )
     module = torch.nn.Linear(in_features=in_features, out_features=out_features)
-    bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
-    propagator = bnn.inference.Linear()
+    bayes_module = BayesianModule(module, learn_var=True)
+    propagator = Linear()
     out = propagator(module=bayes_module, input=x)
     assert list(out.shape) == [
         batch_size,
@@ -87,10 +93,10 @@ def test_inference() -> None:
 
     # Test convolutional propagators.
     n_dim = [1, 2, 3]
-    propagators = [getattr(bnn.inference, f"Conv{n}d")() for n in n_dim]
+    propagators = [getattr(inference, f"Conv{n}d")() for n in n_dim]
     kernel_size = 3
     for n, propagator in enumerate(propagators):
-        x = bnn.types.MuVar(
+        x = MuVar(
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
             ),
@@ -103,7 +109,7 @@ def test_inference() -> None:
             out_channels=out_features,
             kernel_size=kernel_size,
         )
-        bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
+        bayes_module = BayesianModule(module, learn_var=True)
         out = propagator(module=bayes_module, input=x)
         assert list(out.shape) == [
             batch_size,
@@ -113,10 +119,10 @@ def test_inference() -> None:
 
     # Test transposed convolution propagators.
     n_dim = [1, 2, 3]
-    propagators = [getattr(bnn.inference, f"ConvTranspose{n}d")() for n in n_dim]
+    propagators = [getattr(inference, f"ConvTranspose{n}d")() for n in n_dim]
     kernel_size = 3
     for n, propagator in enumerate(propagators):
-        x = bnn.types.MuVar(
+        x = MuVar(
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
             ),
@@ -129,14 +135,10 @@ def test_inference() -> None:
             out_channels=out_features,
             kernel_size=kernel_size,
         )
-        bayes_module = bnn.wrappers.BayesianModule(module, learn_var=True)
+        bayes_module = BayesianModule(module, learn_var=True)
         out = propagator(module=bayes_module, input=x)
         assert list(out.shape) == [
             batch_size,
             out_features,
             *[kernel_size + in_features - 1 for _ in range(n_dim[n])],
         ], f"Outputs of `{type(propagator).__name__}` not expected shape!"
-
-
-if __name__ == "__main__":
-    test_inference()

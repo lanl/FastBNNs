@@ -5,10 +5,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from bnn import base, losses, priors, types
-from datasets import polynomial
-from models import mlp
-from simulation import generators, polynomials, observation
+from fastbnns.bnn import base, losses, priors, types
+from fastbnns.datasets import polynomial
+from fastbnns.models import mlp
+from fastbnns.simulation import generators, polynomials, observation
 
 
 # Create a Bayesian multilayer perceptron to model a linear function y=mx+b.

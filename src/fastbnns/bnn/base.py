@@ -7,9 +7,9 @@ from typing import Any, Callable, Iterator, Union
 import lightning as L
 import torch
 
-from bnn.losses import BNNLoss
-from bnn.types import MuVar
-from bnn.wrappers import convert_to_bnn_
+from .losses import BNNLoss
+from .types import MuVar
+from .wrappers import convert_to_bnn_
 
 
 class BNN(torch.nn.Module):
