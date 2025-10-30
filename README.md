@@ -34,18 +34,23 @@ A neural network `nn: torch.nn.Module` can be converted to a Bayesian neural net
 `bnn.base.BNN` wrapper class (see [Caveats and known limitations](#caveats-and-known-limitations) for exceptions):
 
 ```
+import torch
+
+from fastbnns.bnn.base import BNN
+from fastbnns.models.mlp import MLP
+
 hidden_features = 32
 n_hidden_layers = 1
 in_features = 1
 out_features = 1
-nn = mlp.MLP(
+nn = MLP(
     in_features=in_features,
     out_features=out_features,
     n_hidden_layers=n_hidden_layers,
     hidden_features=hidden_features,
     activation=torch.nn.LeakyReLU,
 )
-bnn = bnn.base.BNN(nn=nn, convert_in_place=False)
+bnn = BNN(nn=nn, convert_in_place=False)
 ```
 
 Forward calls through `bnn` can be made identically to `nn`:
