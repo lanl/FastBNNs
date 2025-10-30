@@ -35,5 +35,4 @@ where = ["src"]
 [tool.setuptools-git-versioning]
 enabled = true
 template = "{tag}"
-dev_template = "{tag}.post{ccount}"
-dirty_template = "{tag}.post{ccount}.dev0"
+dirty_template = "{tag}.post{ccount}"
