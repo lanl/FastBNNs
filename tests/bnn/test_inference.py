@@ -24,7 +24,7 @@ def test_inference() -> None:
     in_features = 3
     x = MuVar(
         torch.randn((batch_size, in_features)),
-        torch.zeros((batch_size, in_features)),
+        torch.randn((batch_size, in_features)) ** 2,
     )
     propagators = [
         BasicPropagator(),
@@ -45,7 +45,7 @@ def test_inference() -> None:
     in_features = 1
     x = MuVar(
         torch.randn((batch_size, in_features)),
-        torch.zeros((batch_size, in_features)),
+        torch.randn((batch_size, in_features)) ** 2,
     )
     n_samples = 100
     propagators = [
@@ -80,7 +80,7 @@ def test_inference() -> None:
     out_features = 2
     x = MuVar(
         torch.randn((batch_size, in_features)),
-        torch.zeros((batch_size, in_features)),
+        torch.randn((batch_size, in_features)) ** 2,
     )
     module = torch.nn.Linear(in_features=in_features, out_features=out_features)
     bayes_module = BayesianModule(module, learn_var=True)
@@ -100,9 +100,10 @@ def test_inference() -> None:
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
             ),
-            torch.zeros(
+            torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
-            ),
+            )
+            ** 2,
         )
         module = getattr(torch.nn, f"Conv{n_dim[n]}d")(
             in_channels=in_features,
@@ -126,9 +127,10 @@ def test_inference() -> None:
             torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
             ),
-            torch.zeros(
+            torch.randn(
                 (batch_size, in_features, *[kernel_size for _ in range(n_dim[n])])
-            ),
+            )
+            ** 2,
         )
         module = getattr(torch.nn, f"ConvTranspose{n_dim[n]}d")(
             in_channels=in_features,
