@@ -91,9 +91,12 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
 def convert_to_bnn_(
     model: torch.nn.Module,
     layer_wrappers: dict = {},
+    layer_wrappers_tag: dict = {},
+    layer_wrappers_type: dict = {},
     wrapper_kwargs: dict = {},
+    wrapper_kwargs_tag: dict = {},
+    wrapper_kwargs_type: dict = {},
     wrapper_kwargs_global: dict = {},
-    broadcast_module_tags: Union[list, tuple] = (),
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
@@ -103,56 +106,101 @@ def convert_to_bnn_(
             module layers. The keys are names of leaf modules (e.g.,
             "module1.layer1") and the values are the corresponding wrapper
             class present in this module (e.g., "BroadcastModule").
+        layer_wrappers_tag: Extends functionality of `layer_wrappers` where
+            keys don't have to be exact layer names but instead can be tags,
+            e.g., {"encoder": "BroadcastModule"} specifies that any
+            submodule in [name for name, _ in model.named_modules()] satisfying
+            `"encoder" in name` will be wrapped with a BroadcastModule.
+        layer_wrappers_type: Extends functionality of `layer_wrappers` where
+            keys are now type names, e.g., {"BatchNorm2d": "BroadcastModule"}
+            specifies that any submodule in [m for m in model.modules()]
+            satisfying `"BatchNorm2d" == type(m).__name__"` will be wrapped
+            with a BroadcastModule.
         wrapper_kwargs: Additional keyword arguments passed to
             initialization of named Bayesian layers.  For example, if `model`
             has a module named "module1", we'll convert "module1" as
             Converter(module1, **wrapper_kwargs["module1"]) where
             Converter is a module converter.
+        wrapper_kwargs_tag: Extends functionality of `wrapper_kwargs` where
+            keys don't have to be exact layer names but instead can be tags,
+            e.g., {"encoder": encoder_kwargs} specifies that any
+            submodule in [name for name, _ in model.named_modules()] satisfying
+            `"encoder" in name` will use `encoder_kwargs` for their wrapper.
+        wrapper_kwargs_type: Extends functionality of `wrapper_kwargs` where
+            keys are now type names, e.g., {"BatchNorm2d": batchnorm_kwargs}
+            specifies that any submodule in [m for m in model.modules()]
+            satisfying `"BatchNorm2d" == type(m).__name__"` will use
+            `batchnorm_kwargs` for their wrapper.
         wrapper_kwargs_global: Keyword arguments that we'll merge
-            with values of wrapper_kwargs as, e.g.,
-            Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
-        broadcast_module_tags: List of strings that, if present in the class
-            name of a module, will indicate the module should be treated as a
-            broadcast module, i.e., apply forward method to mean and variance
-            directly without additional logic.
+            with values of wrapper_kwargs, wrapper_kwargs_tag, and
+            wrapper_kwargs_type as appropriate for each module.
     """
     # Search for modules of `model` to convert, removing stem modules from the
     # list (we just want the leaf modules that contain parameters).
-    module_names = [n for n, _ in model.named_modules()]
-    leaf_names = isolate_leaf_module_names(module_names)
+    modules = {k: v for k, v in model.named_modules()}
+    leaf_names = isolate_leaf_module_names(list(modules.keys()))
 
     # Replace leaf modules with Bayesian counterparts or compatible passthroughs.
     for leaf in leaf_names:
-        module = model.get_submodule(leaf)
-        module_name = module.__class__.__name__
+        module = modules[leaf]
+        module_name = type(module).__name__
 
-        # Prepare module arguments.
-        module_kwargs = wrapper_kwargs_global | wrapper_kwargs.pop(leaf, {})
+        # Prepare module arguments in the following order of priority:
+        #   (1) User-specified kwargs in `wrapper_kwargs`
+        #   (2) User-specified kwargs in `wrapper_kwargs_tag`
+        #   (3) User-specified kwargs in `wrapper_kwargs_type`
+        #   (4) Global default kwargs in `wrapper_kwargs_global`
+        if custom_kwargs := wrapper_kwargs.pop(leaf, {}):
+            pass
+        elif custom_kwargs := [v for k, v in wrapper_kwargs_tag.items() if k in leaf]:
+            # If there are multiple matches we'll just use the first one.
+            custom_kwargs = custom_kwargs[0]
+        elif custom_kwargs := [
+            v for k, v in wrapper_kwargs_type.items() if module_name == k
+        ]:
+            # If there are multiple matches we'll just use the first one.
+            custom_kwargs = custom_kwargs[0]
+        else:
+            custom_kwargs = {}
+        module_kwargs = wrapper_kwargs_global | custom_kwargs
 
-        # Search for an appropriate module converter, in the following order of
-        # priority:
-        #   (1) User-specified wrapper designated in `layer_wrappers`.
-        #   (2) Broadcast layer if tagged by broadcast_module_tags or listed
-        #       in PASSTHROUGH list.
-        #   (3) Named converters if a wrapper exists with the same name as the
-        #       module class.
-        #   (4) BayesianModule
-        if wrapper := layer_wrappers.pop(leaf, None):
+        ## Search for an appropriate module converter, in the following order of
+        ## priority:
+        #   (1) User-specified wrapper designated in `layer_wrappers`
+        #   (2) User-specified wrapper designated in `layer_wrappers_tag`
+        #   (3) User-specified wrapper designated in `layer_wrappers_type`
+        #   (4) Named converters if a wrapper exists with the same name as the
+        #       module class
+        #   (5) BroadcastModule if the module class is listed in BROADCAST
+        #   (6) BayesianModule
+
+        if custom_wrapper := layer_wrappers.pop(leaf, None):
+            pass
+        elif custom_wrapper := [v for k, v in layer_wrappers_tag.items() if k in leaf]:
+            # If there are multiple matches we'll just use the first one.
+            custom_wrapper = custom_wrapper[0]
+        elif custom_wrapper := [
+            v for k, v in layer_wrappers_type.items() if module_name == k
+        ]:
+            # If there are multiple matches we'll just use the first one.
+            custom_wrapper = custom_wrapper[0]
+        else:
+            custom_wrapper = None
+
+        if custom_wrapper is not None:
             # Wrap module in user-specified wrapper.
-            bayesian_layer = getattr(CURRENT_MODULE, wrapper)(
+            bayesian_layer = getattr(CURRENT_MODULE, custom_wrapper)(
                 module=module, **module_kwargs
             )
-        elif (module_name in BROADCAST) or any(
-            [tag in module_name for tag in broadcast_module_tags]
-        ):
-            # This module can be broadcast along (mu, var) without additional
-            # processing (e.g., a flatten layer, which only changes shapes).
-            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
         elif hasattr(CURRENT_MODULE, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(CURRENT_MODULE, module_name)(
                 module=module, **module_kwargs
             )
+        elif module_name in BROADCAST:
+            # This module can be broadcast along (mu, var) without additional
+            # processing (e.g., a flatten layer, which only changes shapes).
+            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
         else:
             bayesian_layer = BayesianModule(module=module, **module_kwargs)
 

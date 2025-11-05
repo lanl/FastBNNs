@@ -6,11 +6,18 @@ getattr(inference, layer.__class__.__name__) will return the custom propagator
 for that layer if available.
 """
 
-from collections.abc import Callable, Iterable
-from typing import List, Optional, Union
+from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+from typing import List, Optional, Union, TYPE_CHECKING
+
+import numpy as np
 import torch
 import torch.distributions as dist
+
+
+if TYPE_CHECKING:
+    from fastbnns.bnn.wrappers import BayesianModule
 
 
 class MomentPropagator(torch.nn.Module):
@@ -200,15 +207,14 @@ class MonteCarlo(MomentPropagator):
         return_samples: bool = False,
     ) -> Union[Iterable, tuple]:
         """Propagate moments by averaging over n_samples forward passes of module."""
-        # If the input variance is greater than zero, we'll need to sample the
-        # input as well.
-        if (input[1] > 0.0).all():
+        # If the input variance is not None, we'll need to sample the input as well.
+        if input[1] is None:
+            samples = torch.stack([module(input[0]) for _ in range(self.n_samples)])
+        else:
             input_dist = self.input_sampler(loc=input[0], scale=input[1].sqrt())
             samples = torch.stack(
                 [module(input_dist.sample()) for _ in range(self.n_samples)]
             )
-        else:
-            samples = torch.stack([module(input[0]) for _ in range(self.n_samples)])
 
         if return_samples:
             return type(input)([samples.mean(dim=0), samples.var(dim=0)]), samples
@@ -227,7 +233,7 @@ class Linear(MomentPropagator):
 
     def forward(
         self,
-        module: torch.nn.Module,
+        module: BayesianModule,
         input: Iterable,
     ) -> Iterable:
         """Analytical moment propagation through layer."""
@@ -278,7 +284,7 @@ class ConvNd(MomentPropagator):
 
     def forward(
         self,
-        module: torch.nn.Module,
+        module: BayesianModule,
         input: Iterable,
     ) -> Iterable:
         """Analytical moment propagation through layer."""
@@ -399,7 +405,7 @@ class ConvTransposeNd(MomentPropagator):
 
     def forward(
         self,
-        module: torch.nn.Module,
+        module: BayesianModule,
         input: Iterable,
         output_size: Optional[List[int]] = None,
     ) -> Iterable:
@@ -470,50 +476,219 @@ class ConvTranspose1d(ConvTransposeNd):
     """Deterministic moment propagation of mean and variance through a ConvTranspose1d layer."""
 
     functional = torch.nn.functional.conv_transpose1d
+    num_spatial_dims = 1
 
     def __init__(self):
         """Initializer for ConvTranspose1d inference module"""
         super().__init__()
-        self.num_spatial_dims = 1
 
 
 class ConvTranspose2d(ConvTransposeNd):
     """Deterministic moment propagation of mean and variance through a ConvTranspose2d layer."""
 
     functional = torch.nn.functional.conv_transpose2d
+    num_spatial_dims = 2
 
     def __init__(self):
         """Initializer for ConvTranspose2d inference module"""
         super().__init__()
-        self.num_spatial_dims = 2
 
 
 class ConvTranspose3d(ConvTransposeNd):
     """Deterministic moment propagation of mean and variance through a ConvTranspose3d layer."""
 
     functional = torch.nn.functional.conv_transpose3d
+    num_spatial_dims = 3
 
     def __init__(self):
         """Initializer for ConvTranspose3d inference module"""
         super().__init__()
-        self.num_spatial_dims = 3
+
+
+class AvgPoolNd(MomentPropagator):
+    """Deterministic moment propagation of mean and variance through AvgPoolNd layers."""
+
+    def __init__(self):
+        """Initializer for AvgPoolNd inference module"""
+        super().__init__()
+
+    def forward(
+        self,
+        module: BayesianModule,
+        input: Iterable,
+    ) -> Iterable:
+        """Analytical moment propagation through layer."""
+        ## Compute analytical result under mean-field approximation following
+        ## https://doi.org/10.48550/arXiv.2402.14532
+        kernel_size = module._module.kernel_size
+        mu = self.functional(
+            input=input[0],
+            kernel_size=kernel_size,
+            stride=module._module.stride,
+            padding=module._module.padding,
+        )
+        n_pool = (
+            kernel_size**self.n_dim
+            if isinstance(kernel_size, int)
+            else torch.prod(torch.tensor(kernel_size))
+        )
+        var = (
+            self.functional(
+                input=input[1],
+                kernel_size=kernel_size,
+                stride=module._module.stride,
+                padding=module._module.padding,
+            )
+            / n_pool
+        )
+
+        return type(input)([mu, var])
+
+
+class AvgPool1d(AvgPoolNd):
+    """Deterministic moment propagation of mean and variance through AvgPool1d layers."""
+
+    functional = torch.nn.functional.avg_pool1d
+    n_dim = 1
+
+    def __init__(self):
+        """Initializer for AvgPool1d inference module"""
+        super().__init__()
+
+
+class AvgPool2d(AvgPoolNd):
+    """Deterministic moment propagation of mean and variance through AvgPool2d layers."""
+
+    functional = torch.nn.functional.avg_pool2d
+    n_dim = 2
+
+    def __init__(self):
+        """Initializer for AvgPool2d inference module"""
+        super().__init__()
+
+
+class AvgPool3d(AvgPoolNd):
+    """Deterministic moment propagation of mean and variance through AvgPool3d layers."""
+
+    functional = torch.nn.functional.avg_pool3d
+    n_dim = 3
+
+    def __init__(self):
+        """Initializer for AvgPool3d inference module"""
+        super().__init__()
+
+
+class ReLUa(MomentPropagator):
+    """Deterministic moment propagation of a normal random variable through a ReLU.
+
+    NOTE: the suffix "a" is added to prevent fastbnns.bnn.wrappers.covert_to_bnn_() from
+    automatically selecting this propagator for ReLU. This is currently desirable
+    since using UnscentedTransform is faster (though less accurate) than analytical propagation.
+    """
+
+    def __init__(self):
+        """Initializer for ReLU inference module"""
+        super().__init__()
+
+    def forward(
+        self,
+        module: BayesianModule,
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
+        """Analytical moment propagation through layer."""
+        ## Compute analytical result under mean-field approximation following
+        ## https://doi.org/10.48550/arXiv.2402.14532
+        # Compute the mean of the output assuming input independent normal random variables.
+        s_input = input[1].sqrt()
+        alpha = torch.clamp(-input[0] / s_input, min=-3.0, max=3.0)
+        phi = 0.5 * (1.0 + torch.erf(alpha / np.sqrt(2.0)))  # P(input<0)
+        psi = torch.exp(-0.5 * (alpha.pow(2))) / np.sqrt(2.0 * np.pi)
+        ev_gt0 = input[0] + s_input * psi / (1.0 - phi)
+        mu = (1.0 - phi) * ev_gt0
+
+        # Compute the variance of the output assuming input independent normal random variables.
+        var_gt0 = input[1] * (
+            1.0 + (alpha * psi / (1.0 - phi)) - (psi / (1.0 - phi)).pow(2)
+        )
+        var = (1 - phi) * var_gt0 + phi * (1 - phi) * ev_gt0.pow(2)
+
+        if module._module.inplace:
+            out = list(input)
+            out[0].copy_(mu)
+            out[1].copy_(var)
+            return type(input)(out)
+        else:
+            return type(input)([mu, var])
+
+
+class LeakyReLUa(MomentPropagator):
+    """Deterministic moment propagation of a normal random variable through a leaky-ReLU.
+
+    NOTE: the suffix "a" is added to prevent fastbnns.bnn.wrappers.covert_to_bnn_() from
+    automatically selecting this propagator for LeakyReLU. This is currently desirable
+    since using UnscentedTransform is faster (though less accurate) than analytical propagation.
+    """
+
+    def __init__(self):
+        """Initializer for leaky-ReLU inference module"""
+        super().__init__()
+
+    def forward(
+        self,
+        module: BayesianModule,
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
+        """Analytical moment propagation through layer."""
+        ## Compute analytical result under mean-field approximation following
+        ## https://doi.org/10.48550/arXiv.2402.14532
+        # Compute the mean of the output assuming input independent normal random variables.
+        l = -module._module.negative_slope
+        s_input = input[1].sqrt()
+        alpha = torch.clamp(-input[0] / s_input, min=-3.0, max=3.0)
+        phi = 0.5 * (1.0 + torch.erf(alpha / np.sqrt(2.0)))  # P(input<0)
+        psi = torch.exp(-0.5 * (alpha.pow(2))) / np.sqrt(2.0 * np.pi)
+        ev_lt0 = input[0] - s_input * psi / phi
+        ev_gt0 = input[0] + s_input * psi / (1.0 - phi)
+        mu = l * phi * ev_lt0 + (1.0 - phi) * ev_gt0
+
+        # Compute the variance of the output assuming input independent normal random variables.
+        var_lt0 = input[1] * (1.0 - (alpha * psi / phi) - (psi / phi).pow(2))
+        var_gt0 = input[1] * (
+            1.0 + (alpha * psi / (1.0 - phi)) - (psi / (1.0 - phi)).pow(2)
+        )
+        var = (
+            (l**2) * phi * var_lt0
+            + (1 - phi) * var_gt0
+            + phi * (1 - phi) * (l * ev_lt0 - ev_gt0).pow(2)
+        )
+
+        if module._module.inplace:
+            out = list(input)
+            out[0].copy_(mu)
+            out[1].copy_(var)
+            return type(input)(out)
+        else:
+            return type(input)([mu, var])
 
 
 if __name__ == "__main__":
     """Example usages of inference modules."""
     import matplotlib.pyplot as plt
+    from fastbnns.bnn.wrappers import BayesianModule
 
     # Define a nonlinearity to propagate through.
-    layer = torch.nn.LeakyReLU()
+    layer = BayesianModule(module=torch.nn.LeakyReLU())
 
     # Define some propagators.
     mc = MonteCarlo(n_samples=100)
     ut = UnscentedTransform()
+    lr = LeakyReLUa()
 
     # Propagate example data through layer.
     input = (torch.tensor([1.23])[None, :], torch.tensor([3.21])[None, :])
     out_mc, samples_mc = mc(module=layer, input=input, return_samples=True)
     out_ut, samples_ut = ut(module=layer, input=input, return_samples=True)
+    out_lr = lr(module=layer, input=input)
 
     # Plot results.
     x = torch.linspace(
@@ -540,6 +715,15 @@ if __name__ == "__main__":
         .log_prob(x)
         .exp(),
         label="Unscented transform estimated PDF",
+    )
+    ax.plot(
+        x,
+        torch.distributions.Normal(
+            loc=out_lr[0].squeeze(), scale=out_lr[1].squeeze().sqrt()
+        )
+        .log_prob(x)
+        .exp(),
+        label="Analytical PDF",
     )
     plt.legend()
     plt.show()
