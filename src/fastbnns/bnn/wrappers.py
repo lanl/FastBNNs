@@ -162,7 +162,7 @@ def convert_to_bnn_(
             custom_kwargs = custom_kwargs[0]
         else:
             custom_kwargs = {}
-        module_kwargs = wrapper_kwargs_global | custom_kwargs
+        module_kwargs = dict(wrapper_kwargs_global) | dict(custom_kwargs)
 
         ## Search for an appropriate module converter, in the following order of
         ## priority:
