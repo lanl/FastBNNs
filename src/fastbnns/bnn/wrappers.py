@@ -162,7 +162,7 @@ def convert_to_bnn_(
             custom_kwargs = custom_kwargs[0]
         else:
             custom_kwargs = {}
-        module_kwargs = wrapper_kwargs_global | custom_kwargs
+        module_kwargs = dict(wrapper_kwargs_global) | dict(custom_kwargs)
 
         ## Search for an appropriate module converter, in the following order of
         ## priority:
@@ -572,10 +572,6 @@ class BayesianModule(BayesianModuleBase):
     ) -> Union[MuVar, torch.Tensor]:
         """Forward pass through layer."""
         if isinstance(input, MuVar):
-            # If the input has no variance, set to zero before propagating.
-            if input[1] is None:
-                input = MuVar(input[0], torch.zeros_like(input[0]))
-
             # Propagate mean and variance through layer.
             out = self.moment_propagator(
                 module=self,
