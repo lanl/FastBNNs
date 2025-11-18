@@ -88,17 +88,16 @@ class UnscentedTransform(MomentPropagator):
         super().__init__()
 
         # Set defaults as needed (defaults chosen as in https://doi.org/10.1117/12.280797)
-        kappa = 2
+        kappa = 2.0
         if sigma_scale is None:
-            sigma_scale = torch.sqrt(torch.tensor(kappa + 1))
+            sigma_scale = torch.sqrt(torch.tensor(kappa + 1.0))
         self.register_buffer("_scale", sigma_scale)
 
         if sigma_weights is None:
             sigma_weights = torch.tensor(
-                [kappa / (kappa + 1), 0.5 / (kappa + 1), 0.5 / (kappa + 1)]
+                [kappa / (kappa + 1.0), 0.5 / (kappa + 1.0), 0.5 / (kappa + 1.0)]
             )
         self.register_buffer("_weights", sigma_weights)
-        self._weights = sigma_weights
 
         self.n_module_samples = n_module_samples
 
@@ -109,21 +108,31 @@ class UnscentedTransform(MomentPropagator):
         return_samples: bool = False,
     ) -> Union[Iterable, tuple]:
         """Propagate moments using the unscented transform."""
-        # Select sigma points and reshape along batch dimension for batched eval.
-        scaled_stdev = self._scale * input[1].sqrt()
-        sigma_points = torch.stack(
-            (input[0], input[0] - scaled_stdev, input[0] + scaled_stdev)
-        )
-        sp_shape = sigma_points.shape
-        sigma_points = sigma_points.reshape(sp_shape[0] * sp_shape[1], *sp_shape[2:])
-        weights = self._weights
+        if input[1] is None:
+            # Input variance is None (zero) so we only need to account for module samples.
+            # Propagate mean and variance.
+            if self.n_module_samples > 1:
+                # Perform n_module_samples unscented transforms and combine results.
+                mu_samples = []
+                var_samples = []
+                for n in range(self.n_module_samples):
+                    # Prepare a sampled instance of the module.  For stochastic modules,
+                    # module.module returns a new sample of weights each time, so
+                    # we need to prepare the instance before running .forward() on each
+                    # sigma point.
+                    if hasattr(module, "module"):
+                        module_sample = module.module
+                    else:
+                        module_sample = module
 
-        # Propagate mean and variance.
-        if self.n_module_samples > 1:
-            # Perform n_module_samples unscented transforms and combine results.
-            mu_samples = []
-            var_samples = []
-            for n in range(self.n_module_samples):
+                    # Forward pass through module.
+                    mu_samples.append(module_sample(input[0]))
+
+                # Combine estimates from each unscented transform using law of total
+                # expectation and law of total variance.
+                mu = torch.stack(mu_samples).mean(dim=0)
+                var = torch.stack(mu_samples).var(dim=0)
+            else:
                 # Prepare a sampled instance of the module.  For stochastic modules,
                 # module.module returns a new sample of weights each time, so
                 # we need to prepare the instance before running .forward() on each
@@ -133,40 +142,74 @@ class UnscentedTransform(MomentPropagator):
                 else:
                     module_sample = module
 
-                # Forward pass through module and use unscented transform.
+                # Forward pass through module.
+                mu = module_sample(input[0])
+                var = None
+        else:
+            # Select sigma points and reshape along batch dimension for batched eval.
+            scaled_stdev = self._scale * input[1].sqrt()
+            sigma_points = torch.stack(
+                (input[0], input[0] - scaled_stdev, input[0] + scaled_stdev)
+            )
+            sp_shape = sigma_points.shape
+            sigma_points = sigma_points.reshape(
+                sp_shape[0] * sp_shape[1], *sp_shape[2:]
+            )
+            weights = self._weights
+
+            # Propagate mean and variance.
+            if self.n_module_samples > 1:
+                # Perform n_module_samples unscented transforms and combine results.
+                mu_samples = []
+                var_samples = []
+                for n in range(self.n_module_samples):
+                    # Prepare a sampled instance of the module.  For stochastic modules,
+                    # module.module returns a new sample of weights each time, so
+                    # we need to prepare the instance before running .forward() on each
+                    # sigma point.
+                    if hasattr(module, "module"):
+                        module_sample = module.module
+                    else:
+                        module_sample = module
+
+                    # Forward pass through module and use unscented transform.
+                    samples = module_sample(sigma_points)
+                    samples = samples.reshape(
+                        sp_shape[0], sp_shape[1], *samples.shape[1:]
+                    )
+                    if n == 0:
+                        weights = weights.reshape(
+                            (weights.shape[0],) + (1,) * (samples.ndim - 1)
+                        )
+                    mu_samples.append((weights * samples).sum(dim=0))
+                    var_samples.append(
+                        (weights * ((samples - mu_samples[-1]) ** 2)).sum(dim=0)
+                    )
+
+                # Combine estimates from each unscented transform using law of total
+                # expectation and law of total variance.
+                mu = torch.stack(mu_samples).mean(dim=0)
+                var = torch.stack(var_samples).mean(dim=0) + torch.stack(
+                    mu_samples
+                ).var(dim=0)
+            else:
+                # Prepare a sampled instance of the module.  For stochastic modules,
+                # module.module returns a new sample of weights each time, so
+                # we need to prepare the instance before running .forward() on each
+                # sigma point.
+                if hasattr(module, "module"):
+                    module_sample = module.module
+                else:
+                    module_sample = module
+
+                # Compute output mean and variance.
                 samples = module_sample(sigma_points)
                 samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
-                if n == 0:
-                    weights = weights.reshape(
-                        (weights.shape[0],) + (1,) * (samples.ndim - 1)
-                    )
-                mu_samples.append((weights * samples).sum(dim=0))
-                var_samples.append(
-                    (weights * ((samples - mu_samples[-1]) ** 2)).sum(dim=0)
+                weights = weights.reshape(
+                    (weights.shape[0],) + (1,) * (samples.ndim - 1)
                 )
-
-            # Combine estimates from each unscented transform using law of total
-            # expectation and law of total variance.
-            mu = torch.stack(mu_samples).mean(dim=0)
-            var = torch.stack(var_samples).mean(dim=0) + torch.stack(mu_samples).var(
-                dim=0
-            )
-        else:
-            # Prepare a sampled instance of the module.  For stochastic modules,
-            # module.module returns a new sample of weights each time, so
-            # we need to prepare the instance before running .forward() on each
-            # sigma point.
-            if hasattr(module, "module"):
-                module_sample = module.module
-            else:
-                module_sample = module
-
-            # Compute output mean and variance.
-            samples = module_sample(sigma_points)
-            samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
-            weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
-            mu = (weights * samples).sum(dim=0)
-            var = (weights * ((samples - mu) ** 2)).sum(dim=0)
+                mu = (weights * samples).sum(dim=0)
+                var = (weights * ((samples - mu) ** 2)).sum(dim=0)
 
         if return_samples:
             return type(input)([mu, var]), samples
