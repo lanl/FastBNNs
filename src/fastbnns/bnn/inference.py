@@ -9,7 +9,7 @@ for that layer if available.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import List, Optional, Union, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -30,8 +30,8 @@ class MomentPropagator(torch.nn.Module):
     def forward(
         self,
         module: Callable,
-        input: Iterable,
-    ) -> Union[Iterable, tuple]:
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
         """Forward method for MomentPropagator modules.
 
         Args:
@@ -57,10 +57,10 @@ class BasicPropagator(MomentPropagator):
     def forward(
         self,
         module: Callable,
-        input: Iterable,
-    ) -> Union[Iterable, tuple]:
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
         """Propagate moments by relying intrinsically on methods in types.MuVar."""
-        return module.module(input)
+        return module(input)
 
 
 class UnscentedTransform(MomentPropagator):
@@ -104,9 +104,9 @@ class UnscentedTransform(MomentPropagator):
     def forward(
         self,
         module: Callable,
-        input: Iterable,
+        input: Iterable[torch.Tensor],
         return_samples: bool = False,
-    ) -> Union[Iterable, tuple]:
+    ) -> Iterable[torch.Tensor]:
         """Propagate moments using the unscented transform."""
         if input[1] is None:
             # Input variance is None (zero) so we only need to account for module samples.
@@ -116,34 +116,16 @@ class UnscentedTransform(MomentPropagator):
                 mu_samples = []
                 var_samples = []
                 for n in range(self.n_module_samples):
-                    # Prepare a sampled instance of the module.  For stochastic modules,
-                    # module.module returns a new sample of weights each time, so
-                    # we need to prepare the instance before running .forward() on each
-                    # sigma point.
-                    if hasattr(module, "module"):
-                        module_sample = module.module
-                    else:
-                        module_sample = module
-
                     # Forward pass through module.
-                    mu_samples.append(module_sample(input[0]))
+                    mu_samples.append(module(input[0]))
 
                 # Combine estimates from each unscented transform using law of total
                 # expectation and law of total variance.
                 mu = torch.stack(mu_samples).mean(dim=0)
                 var = torch.stack(mu_samples).var(dim=0)
             else:
-                # Prepare a sampled instance of the module.  For stochastic modules,
-                # module.module returns a new sample of weights each time, so
-                # we need to prepare the instance before running .forward() on each
-                # sigma point.
-                if hasattr(module, "module"):
-                    module_sample = module.module
-                else:
-                    module_sample = module
-
                 # Forward pass through module.
-                mu = module_sample(input[0])
+                mu = module(input[0])
                 var = None
         else:
             # Select sigma points and reshape along batch dimension for batched eval.
@@ -163,17 +145,8 @@ class UnscentedTransform(MomentPropagator):
                 mu_samples = []
                 var_samples = []
                 for n in range(self.n_module_samples):
-                    # Prepare a sampled instance of the module.  For stochastic modules,
-                    # module.module returns a new sample of weights each time, so
-                    # we need to prepare the instance before running .forward() on each
-                    # sigma point.
-                    if hasattr(module, "module"):
-                        module_sample = module.module
-                    else:
-                        module_sample = module
-
                     # Forward pass through module and use unscented transform.
-                    samples = module_sample(sigma_points)
+                    samples = module(sigma_points)
                     samples = samples.reshape(
                         sp_shape[0], sp_shape[1], *samples.shape[1:]
                     )
@@ -193,17 +166,8 @@ class UnscentedTransform(MomentPropagator):
                     mu_samples
                 ).var(dim=0)
             else:
-                # Prepare a sampled instance of the module.  For stochastic modules,
-                # module.module returns a new sample of weights each time, so
-                # we need to prepare the instance before running .forward() on each
-                # sigma point.
-                if hasattr(module, "module"):
-                    module_sample = module.module
-                else:
-                    module_sample = module
-
                 # Compute output mean and variance.
-                samples = module_sample(sigma_points)
+                samples = module(sigma_points)
                 samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
                 weights = weights.reshape(
                     (weights.shape[0],) + (1,) * (samples.ndim - 1)
@@ -246,9 +210,9 @@ class MonteCarlo(MomentPropagator):
     def forward(
         self,
         module: Callable,
-        input: Iterable,
+        input: Iterable[torch.Tensor],
         return_samples: bool = False,
-    ) -> Union[Iterable, tuple]:
+    ) -> Iterable[torch.Tensor]:
         """Propagate moments by averaging over n_samples forward passes of module."""
         # If the input variance is not None, we'll need to sample the input as well.
         if input[1] is None:
@@ -277,8 +241,8 @@ class Linear(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable,
-    ) -> Iterable:
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
@@ -333,8 +297,8 @@ class ConvNd(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable,
-    ) -> Iterable:
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
         """Analytical moment propagation through layer."""
         # Modify input and prepare functional arguments.
         if module._module.padding_mode != "zeros":
@@ -459,9 +423,9 @@ class ConvTransposeNd(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable,
+        input: Iterable[torch.Tensor],
         output_size: Optional[List[int]] = None,
-    ) -> Iterable:
+    ) -> Iterable[torch.Tensor]:
         """Analytical moment propagation through layer."""
         # Prepare functional arguments.
         output_padding = module._module._output_padding(
@@ -573,8 +537,8 @@ class AvgPoolNd(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable,
-    ) -> Iterable:
+        input: Iterable[torch.Tensor],
+    ) -> Iterable[torch.Tensor]:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
@@ -661,7 +625,7 @@ class ReLUa(MomentPropagator):
         ## https://doi.org/10.48550/arXiv.2402.14532
         if input[1] is None:
             # With no input variance we can apply the ReLU directly.
-            mu = module.module(input[0])
+            mu = module(input[0])
             var = None
         else:
             # Compute the mean of the output assuming input independent normal random variables.
@@ -709,7 +673,7 @@ class LeakyReLUa(MomentPropagator):
         ## https://doi.org/10.48550/arXiv.2402.14532
         if input[1] is None:
             # With no input variance we can apply the ReLU directly.
-            mu = module.module(input[0])
+            mu = module(input[0])
             var = None
         else:
             # Compute the mean of the output assuming input independent normal random variables.
