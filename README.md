@@ -75,8 +75,8 @@ Alternatively, to leverage the fast inference methods (i.e., non-sampling-based)
 
 ```
 out_bnn_fast = out_bnn(bnn.types.MuVar(data))
-out_bnn_fast_mean = out_bnn_fast[0]
-out_bnn_fast_var = out_bnn_fast[1]
+out_bnn_fast_mean = out_bnn_fast.mu
+out_bnn_fast_var = out_bnn_fast.var
 ```
 
 
