@@ -54,7 +54,7 @@ TENSOR_METHODS = ["cpu", "cuda", "to", "requires_grad_", "view"]
 
 
 class MuVar:
-    """Custom list-like object holding mean and variance of some distribution.
+    """Custom object holding mean and variance of some distribution.
 
     WARNING: Some functionality, like __pow__(), assumes the normal distribution!"""
 
@@ -77,19 +77,21 @@ class MuVar:
             var: Variance of input distribution.
         """
         if isinstance(mu, (list, tuple)):
-            # Mean and variance passed as a list or tuple. Ensure we store as
-            # a list so that it is mutable.
-            self.mu_var = list(mu)
+            self.mu = mu[0]
+            self.var = mu[1]
         elif isinstance(mu, MuVar):
             # Repackage for compatibility.
-            self.mu_var = mu.mu_var
+            self.mu = mu.mu
+            self.var = mu.var
         elif var is None:
             # Only mean was passed, default variance to None
             # (which will be treated as zero when possible/appropriate).
-            self.mu_var = (mu, None)
+            self.mu = mu
+            self.var = None
         else:
             # Mu and var passed individually.
-            self.mu_var = (mu, var)
+            self.mu = mu
+            self.var = var
 
     @classmethod
     def __torch_function__(
@@ -121,9 +123,9 @@ class MuVar:
                         if isinstance(arg, MuVar):
                             # Split into mu and var, explicitly materializing None var's to zeros
                             # (to enable generic function applications expecting a tensor valued var).
-                            args_mu.append(arg[0])
+                            args_mu.append(arg.mu)
                             args_var.append(
-                                torch.zeros_like(arg[0]) if arg[1] is None else arg[1]
+                                torch.zeros_like(arg.mu) if arg.var is None else arg.var
                             )
                         elif isinstance(arg, (list, tuple)):
                             # Split MuVar items if needed.
@@ -155,12 +157,12 @@ class MuVar:
 
     def __repr__(self):
         """Custom display functionality."""
-        return f"MuVar({self.mu_var})"
+        return f"MuVar({self.mu}, {self.var})"
 
     def __getattr__(self, name: str) -> Any:
         """Custom getattr fallback handler."""
         # If a torch function exists with name `name` (e.g., x.sum()), return that.
-        # Otherwise we'll return the requested attribute for self.mu_var[0].
+        # Otherwise we'll return the requested attribute for self.mu.
         torch_fxn = getattr(torch, name, None)
         if name in TENSOR_METHODS:
             # These methods can only be called as tensor.method() but otherwise can be applied
@@ -169,32 +171,33 @@ class MuVar:
         elif (torch_fxn is not None) and callable(torch_fxn):
             return functools.partial(torch_fxn, self)
         else:
-            mu = self.mu_var[0]
-            if hasattr(mu, name):
-                return getattr(mu, name)
+            if hasattr(self.mu, name):
+                return getattr(self.mu, name)
 
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        """Access requested index of self.mu_var"""
-        return self.mu_var[idx]
+    def __getitem__(self, idx: int) -> MuVar:
+        """Access requested index of self.mu and self.var"""
+        return MuVar(self.mu[idx], self.var[idx])
 
     def __add__(self, input: Union[float, torch.Tensor, list, MuVar]) -> MuVar:
         """Custom add functionality for MuVar types."""
         if isinstance(input, (float, torch.Tensor)):
             # Adding a float or tensor is like adding a delta R.V., so
             # variance does not change.
-            return MuVar(self.mu_var[0] + input, self.mu_var[1])
+            return MuVar(self.mu + input, self.var)
         elif isinstance(input, (list, MuVar)):
             # Means and variances both add (assuming independent distributions).
-            if (self.mu_var[1] is None) and (input[1] is None):
-                return MuVar(self.mu_var[0] + input[0], None)
-            elif self.mu_var[1] is None:
-                return MuVar(self.mu_var[0] + input[0], input[1])
-            elif input[1] is None:
-                return MuVar(self.mu_var[0] + input[0], self.mu_var[1])
+            mu_in = input.mu if isinstance(input, MuVar) else input[0]
+            var_in = input.var if isinstance(input, MuVar) else input[1]
+            if (self.var is None) and (var_in is None):
+                return MuVar(self.mu + mu_in, None)
+            elif self.var is None:
+                return MuVar(self.mu + mu_in, var_in)
+            elif var_in is None:
+                return MuVar(self.mu + mu_in, self.var)
             else:
-                return MuVar(self.mu_var[0] + input[0], self.mu_var[1] + input[1])
+                return MuVar(self.mu + mu_in, self.var + var_in)
         else:
             raise NotImplementedError
 
@@ -207,17 +210,19 @@ class MuVar:
         if isinstance(input, (float, torch.Tensor)):
             # Adding a float or tensor is like adding a delta R.V., so
             # variance does not change.
-            return MuVar(self.mu_var[0] - input, self.mu_var[1])
+            return MuVar(self.mu - input, self.var)
         elif isinstance(input, (list, MuVar)):
             # Means can be subtracted but variances still add.
-            if (self.mu_var[1] is None) and (input[1] is None):
-                return MuVar(self.mu_var[0] - input[0], None)
-            elif self.mu_var[1] is None:
-                return MuVar(self.mu_var[0] - input[0], input[1])
-            elif input[1] is None:
-                return MuVar(self.mu_var[0] - input[0], self.mu_var[1])
+            mu_in = input.mu if isinstance(input, MuVar) else input[0]
+            var_in = input.var if isinstance(input, MuVar) else input[1]
+            if (self.var is None) and (var_in is None):
+                return MuVar(self.mu - mu_in, None)
+            elif self.var is None:
+                return MuVar(self.mu - mu_in, var_in)
+            elif var_in is None:
+                return MuVar(self.mu - mu_in, self.var)
             else:
-                return MuVar(self.mu_var[0] - input[0], self.mu_var[1] + input[1])
+                return MuVar(self.mu - mu_in, self.var + var_in)
         else:
             raise NotImplementedError
 
@@ -229,25 +234,25 @@ class MuVar:
         """Custom multiply functionality for MuVar types."""
         if isinstance(input, (float, torch.Tensor)):
             # Multiplication by scalar: E[aX] = aE[x], V[aX]=a**2 V[X]
-            if self.mu_var[1] is None:
-                return MuVar(input * self.mu_var[0], None)
+            if self.var is None:
+                return MuVar(input * self.mu, None)
             else:
-                return MuVar(input * self.mu_var[0], (input**2) * self.mu_var[1])
+                return MuVar(input * self.mu, (input**2) * self.var)
         elif isinstance(input, (list, MuVar)):
             # Multiplication of two random independent variables:
             #   E[XY] = E[X]E[Y]
             #   V[XY] = (E[X]**2)*V[Y] + V[X]*(E[Y]**2) + V[X]*V[Y]
-            mu = input[0] * self.mu_var[0]
-            if (self.mu_var[1] is None) and (input[1] is None):
+            mu_in = input.mu if isinstance(input, MuVar) else input[0]
+            var_in = input.var if isinstance(input, MuVar) else input[1]
+            mu = mu_in * self.mu
+            if (self.var is None) and (var_in is None):
                 var = None
-            elif self.mu_var[1] is None:
-                var = (self.mu_var[0] ** 2) * input[1]
-            elif input[1] is None:
-                var = self.mu_var[1] * (input[0] ** 2)
+            elif self.var is None:
+                var = (self.mu**2) * var_in
+            elif var_in is None:
+                var = self.var * (mu_in**2)
             else:
-                var = (self.mu_var[0] ** 2) * input[1] + self.mu_var[1] * (
-                    (input[0] ** 2) + input[1]
-                )
+                var = (self.mu**2) * var_in + self.var * ((mu_in**2) + var_in)
             return MuVar(mu, var)
         else:
             raise NotImplementedError
@@ -263,25 +268,25 @@ class MuVar:
         # is not multiplication of multivariate random variables!
         if isinstance(input, torch.Tensor):
             # Multiplication by scalar: E[a@X] = a @ E[x], V[a@X]=a**2 @ V[X]
-            if self.mu_var[1] is None:
-                return MuVar(input @ self.mu_var[0], None)
+            if self.var is None:
+                return MuVar(input @ self.mu, None)
             else:
-                return MuVar(input @ self.mu_var[0], input @ self.mu_var[1] @ input.T)
+                return MuVar(input @ self.mu, input @ self.var @ input.T)
         elif isinstance(input, (list, MuVar)):
             # Multiplication of two random independent variables:
             #   E[X@Y] = E[X] @ E[Y]
             #   V[X@Y] = E[X]**2 @ V[Y] + V[X] @  E[Y]**2 + V[X] @ V[Y]
-            mu = self.mu_var[0] @ input[0]
-            if (self.mu_var[1] is None) and (input[1] is None):
+            mu_in = input.mu if isinstance(input, MuVar) else input[0]
+            var_in = input.var if isinstance(input, MuVar) else input[1]
+            mu = self.mu @ mu_in
+            if (self.var is None) and (var_in is None):
                 var = None
-            elif self.mu_var[1] is None:
-                var = (self.mu_var[0] ** 2) @ input[1]
-            elif input[1] is None:
-                var = self.mu_var[1] @ (input[0] ** 2)
+            elif self.var is None:
+                var = (self.mu**2) @ var_in
+            elif var_in is None:
+                var = self.var @ (mu_in**2)
             else:
-                var = (self.mu_var[0] ** 2) @ input[1] + self.mu_var[1] @ (
-                    (input[0] ** 2) + input[1]
-                )
+                var = (self.mu**2) @ var_in + self.var @ ((mu_in**2) + var_in)
             return MuVar(mu, var)
         else:
             raise NotImplementedError
@@ -310,13 +315,13 @@ class MuVar:
                     moment += coeff * (v**m) * (mu ** (n - 2 * m))
                 return moment
 
-            mu = normal_moment(mu=self.mu_var[0], v=self.mu_var[1], n=input)
-            if self.mu_var[1] is None:
+            mu = normal_moment(mu=self.mu, v=self.var, n=input)
+            if self.var is None:
                 var = None
             else:
                 var = (
-                    normal_moment(mu=self.mu_var[0], v=self.mu_var[1], n=2 * input)
-                    - normal_moment(mu=self.mu_var[0], v=self.mu_var[1], n=input) ** 2
+                    normal_moment(mu=self.mu, v=self.var, n=2 * input)
+                    - normal_moment(mu=self.mu, v=self.var, n=input) ** 2
                 )
             return MuVar(mu, var)
         else:
@@ -324,56 +329,56 @@ class MuVar:
 
     def apply(self, func: Callable, *args, **kwargs) -> MuVar:
         """Generic apply() for functions that act separately on mu and var."""
-        if self.mu_var[1] is None:
-            # If self.mu_var[1] is None (zero variance), we need to explicitly materialize the
+        if self.var is None:
+            # If self.var is None (zero variance), we need to explicitly materialize the
             # zeros tensor to accommodate arbitrary func().
             return MuVar(
-                func(self.mu_var[0], *args, **kwargs),
-                func(torch.zeros_like(self.mu_var[0]), *args, **kwargs),
+                func(self.mu, *args, **kwargs),
+                func(torch.zeros_like(self.mu), *args, **kwargs),
             )
         else:
             return MuVar(
-                func(self.mu_var[0], *args, **kwargs),
-                func(self.mu_var[1], *args, **kwargs),
+                func(self.mu, *args, **kwargs),
+                func(self.var, *args, **kwargs),
             )
 
     def apply_method(self, name: str, *args, **kwargs) -> MuVar:
         """Generic apply_method() for methods that act separately on mu and var."""
-        if self.mu_var[1] is None:
-            # If self.mu_var[1] is None (zero variance), we need to explicitly materialize the
+        if self.var is None:
+            # If self.var is None (zero variance), we need to explicitly materialize the
             # zeros tensor to accommodate arbitrary func().
             return MuVar(
-                getattr(self.mu_var[0], name)(*args, **kwargs),
-                getattr(torch.zeros_like(self.mu_var[0]), name)(*args, **kwargs),
+                getattr(self.mu, name)(*args, **kwargs),
+                getattr(torch.zeros_like(self.mu), name)(*args, **kwargs),
             )
         else:
             return MuVar(
-                getattr(self.mu_var[0], name)(*args, **kwargs),
-                getattr(self.mu_var[1], name)(*args, **kwargs),
+                getattr(self.mu, name)(*args, **kwargs),
+                getattr(self.var, name)(*args, **kwargs),
             )
 
     def numel(self) -> int:
         """Custom numel() to avoid complicated logic in __getattr__ above."""
-        return self.mu_var[0].numel()
+        return self.mu.numel()
 
     def mean(self, *args, **kwargs) -> MuVar:
         """Custom replacement of torch.mean() for MuVar type."""
-        # Assuming independence, we can directly apply mean to self.mu_var[0].
-        x_mean = self.mu_var[0].mean(*args, **kwargs)
+        # Assuming independence, we can directly apply mean to self.mu.
+        x_mean = self.mu.mean(*args, **kwargs)
 
         # To compute variance, we call the torch version of mean() with
         # keepdim=True so we can account for the scaling factor:
         # assuming independence, V[(x_0+x_1) / 2] = (V[x_0]+V[x_1]) / 4
-        if self.mu_var[1] is None:
+        if self.var is None:
             x_var = None
         else:
             if (args == ()) and (kwargs == {}):
-                x_var = self.mu_var[1].mean()
-                x_var /= self.mu_var[1].numel() ** 2
+                x_var = self.var.mean()
+                x_var /= self.var.numel() ** 2
             else:
-                x_var = self.mu_var[1].mean(*args, **(kwargs | {"keepdim": True}))
+                x_var = self.var.mean(*args, **(kwargs | {"keepdim": True}))
                 x_var /= (
-                    torch.tensor(self.mu_var[1].shape) / torch.tensor(x_var.shape)
+                    torch.tensor(self.var.shape) / torch.tensor(x_var.shape)
                 ).prod().squeeze() ** 2
         if kwargs.pop("keepdim", None) is None:
             return MuVar(x_mean, x_var)

@@ -52,7 +52,7 @@ bnn = bnn.to(device)
 
 # Define a prior (this one applies to all parameters in the model).
 prior = priors.Distribution(
-    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
+    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([0.5]))
 ).to(device)
 
 # Define a dataset.
@@ -122,9 +122,9 @@ for epoch in range(n_epochs):
         # Compute loss.
         loss = loss_fn(
             model=bnn,
-            input=out[0],
+            input=out.mu,
             target=batch["input"]["mu"][:, 0].to(device),
-            var=out[1],
+            var=out.var,
         )
 
         # Compute gradients and clip to stabilize training.
@@ -138,8 +138,8 @@ for epoch in range(n_epochs):
         within_1sigma_train.append(
             statistics.compute_coverage(
                 observations=batch["input"]["mu"][:, 0].to(device),
-                mu=out[0],
-                sigma=out[1].sqrt(),
+                mu=out.mu,
+                sigma=out.var.sqrt(),
                 alphas=torch.tensor([1.0]),
             ).item()
         )
@@ -156,9 +156,9 @@ for epoch in range(n_epochs):
             # Compute loss.
             loss = loss_fn(
                 model=bnn,
-                input=out[0],
+                input=out.mu,
                 target=batch["input"]["mu"][:, 0].to(device),
-                var=out[1],
+                var=out.var,
             )
             loss_epoch_val.append(loss.item())
 
@@ -166,8 +166,8 @@ for epoch in range(n_epochs):
             within_1sigma_val.append(
                 statistics.compute_coverage(
                     observations=batch["input"]["mu"][:, 0].to(device),
-                    mu=out[0],
-                    sigma=out[1].sqrt(),
+                    mu=out.mu,
+                    sigma=out.var.sqrt(),
                     alphas=torch.tensor([1.0]),
                 ).item()
             )
@@ -220,8 +220,8 @@ for n in range(n_data_test):
 
     # Plot prediction.
     circle = patches.Circle(
-        (output[0][n, 1].detach().cpu(), output[0][n, 0].detach().cpu()),
-        radius=output[1][n].detach().cpu().mean().sqrt(),
+        (output.mu[n, 1].detach().cpu(), output.mu[n, 0].detach().cpu()),
+        radius=output.var[n].detach().cpu().mean().sqrt(),
         fill=False,
         color=matched_colors[n],
     )
@@ -229,8 +229,8 @@ for n in range(n_data_test):
 
     # Plot a line connection GT to prediction to aid visualization.
     ax.plot(
-        [output[0][n, 1].detach().cpu(), data["input"]["mu"][n, 0, 1]],
-        [output[0][n, 0].detach().cpu(), data["input"]["mu"][n, 0, 0]],
+        [output.mu[n, 1].detach().cpu(), data["input"]["mu"][n, 0, 1]],
+        [output.mu[n, 0].detach().cpu(), data["input"]["mu"][n, 0, 0]],
         color=matched_colors[n],
     )
 ax.plot([], "k.", label="ground truth")

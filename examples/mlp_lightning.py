@@ -72,8 +72,8 @@ input = []
 output = []
 n_examples = 1000
 bnn = bnn.to("cpu")
-dataset.data_generator.simulator_kwargs_generator["x"] = lambda: 2.0 * (
-    torch.rand(1) - 0.5
+dataset.data_generator.simulator_kwargs_generator["x"] = lambda: (
+    2.0 * (torch.rand(1) - 0.5)
 )
 for n in range(n_examples):
     data = dataset[n]
@@ -83,8 +83,8 @@ with torch.no_grad():
     output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
-y = output[0].cpu().squeeze()[sort_inds]
-yerr = output[1].cpu().sqrt().squeeze()[sort_inds]
+y = output.mu.cpu().squeeze()[sort_inds]
+yerr = output.var.cpu().sqrt().squeeze()[sort_inds]
 y_gt = data_generator.simulator(x=x, **data_generator.simulator_kwargs)
 yerr_gt = noise_tform.noise_fxn_kwargs_generator["sigma"](x)
 fig, ax = plt.subplots()

@@ -31,7 +31,7 @@ bnn = bnn.to(device)
 
 # Define a prior (this one applies to all parameters in the model).
 prior = priors.Distribution(
-    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([1.0]))
+    torch.distributions.Normal(loc=torch.tensor([0.0]), scale=torch.tensor([0.5]))
 ).to(device)
 
 # Define a dataset.
@@ -78,11 +78,11 @@ for epoch in range(n_epochs):
         # Compute loss: this model provides an additional output node that
         # we'll treat as the unscaled aleatoric uncertainty (variance inherent to
         # the data).
-        aleatoric_var = torch.nn.functional.softplus(out[0][:, 1]) ** 2
-        epistemic_var = out[1][:, 0]
+        aleatoric_var = torch.nn.functional.softplus(out.mu[:, 1]) ** 2
+        epistemic_var = out.var[:, 0]
         loss = loss_fn(
             model=bnn,
-            input=out[0][:, 0],
+            input=out.mu[:, 0],
             target=batch[1][:, 0].to(device),
             var=aleatoric_var + epistemic_var,
         )
@@ -96,7 +96,7 @@ for epoch in range(n_epochs):
         within_1sigma_epoch.append(
             statistics.compute_coverage(
                 observations=batch[1][:, 0].to(device),
-                mu=out[0][:, 0],
+                mu=out.mu[:, 0],
                 sigma=(aleatoric_var + epistemic_var).sqrt(),
                 alphas=torch.tensor([1.0]),
             ).item()
@@ -118,8 +118,8 @@ input = []
 output = []
 n_examples = 1000
 bnn = bnn.to("cpu")
-dataset.data_generator.simulator_kwargs_generator["x"] = lambda: 2.0 * (
-    torch.rand(1) - 0.5
+dataset.data_generator.simulator_kwargs_generator["x"] = lambda: (
+    2.0 * (torch.rand(1) - 0.5)
 )
 for n in range(n_examples):
     data = dataset[n]
@@ -128,12 +128,12 @@ input = torch.stack(input, dim=0)
 output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
-y = output[0][:, 0].detach().cpu().squeeze()[sort_inds]
+y = output.mu[:, 0].detach().cpu().squeeze()[sort_inds]
 y_var_aleatoric = (
-    torch.nn.functional.softplus(output[0][:, 1]).detach().cpu().squeeze()[sort_inds]
+    torch.nn.functional.softplus(output.mu[:, 1]).detach().cpu().squeeze()[sort_inds]
     ** 2
 )
-y_var_epistemic = output[1][:, 0].detach().cpu().squeeze()[sort_inds]
+y_var_epistemic = output.var[:, 0].detach().cpu().squeeze()[sort_inds]
 yerr = (y_var_aleatoric + y_var_epistemic).sqrt()
 y_gt = data_generator.simulator(x=x, **data_generator.simulator_kwargs)
 yerr_gt = noise_tform.noise_fxn_kwargs_generator["sigma"](x)
