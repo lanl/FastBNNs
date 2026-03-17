@@ -15,6 +15,8 @@ import numpy as np
 import torch
 import torch.distributions as dist
 
+from . import types
+
 
 if TYPE_CHECKING:
     from fastbnns.bnn.wrappers import BayesianModule
@@ -104,11 +106,11 @@ class UnscentedTransform(MomentPropagator):
     def forward(
         self,
         module: Callable,
-        input: Iterable[torch.Tensor],
+        input: types.MuVar,
         return_samples: bool = False,
-    ) -> Iterable[torch.Tensor]:
+    ) -> types.MuVar:
         """Propagate moments using the unscented transform."""
-        if input[1] is None:
+        if input.var is None:
             # Input variance is None (zero) so we only need to account for module samples.
             # Propagate mean and variance.
             if self.n_module_samples > 1:
@@ -117,7 +119,7 @@ class UnscentedTransform(MomentPropagator):
                 var_samples = []
                 for n in range(self.n_module_samples):
                     # Forward pass through module.
-                    mu_samples.append(module(input[0]))
+                    mu_samples.append(module(input.mu))
 
                 # Combine estimates from each unscented transform using law of total
                 # expectation and law of total variance.
@@ -125,13 +127,13 @@ class UnscentedTransform(MomentPropagator):
                 var = torch.stack(mu_samples).var(dim=0)
             else:
                 # Forward pass through module.
-                mu = module(input[0])
+                mu = module(input.mu)
                 var = None
         else:
             # Select sigma points and reshape along batch dimension for batched eval.
-            scaled_stdev = self._scale * input[1].sqrt()
+            scaled_stdev = self._scale * input.var.sqrt()
             sigma_points = torch.stack(
-                (input[0], input[0] - scaled_stdev, input[0] + scaled_stdev)
+                (input.mu, input.mu - scaled_stdev, input.mu + scaled_stdev)
             )
             sp_shape = sigma_points.shape
             sigma_points = sigma_points.reshape(
@@ -210,15 +212,15 @@ class MonteCarlo(MomentPropagator):
     def forward(
         self,
         module: Callable,
-        input: Iterable[torch.Tensor],
+        input: types.MuVar,
         return_samples: bool = False,
-    ) -> Iterable[torch.Tensor]:
+    ) -> types.MuVar:
         """Propagate moments by averaging over n_samples forward passes of module."""
         # If the input variance is not None, we'll need to sample the input as well.
-        if input[1] is None:
-            samples = torch.stack([module(input[0]) for _ in range(self.n_samples)])
+        if input.var is None:
+            samples = torch.stack([module(input.mu) for _ in range(self.n_samples)])
         else:
-            input_dist = self.input_sampler(loc=input[0], scale=input[1].sqrt())
+            input_dist = self.input_sampler(loc=input.mu, scale=input.var.sqrt())
             samples = torch.stack(
                 [module(input_dist.sample()) for _ in range(self.n_samples)]
             )
@@ -241,8 +243,8 @@ class Linear(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable[torch.Tensor],
-    ) -> Iterable[torch.Tensor]:
+        input: types.MuVar,
+    ) -> types.MuVar:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
@@ -255,32 +257,32 @@ class Linear(MomentPropagator):
 
         # Propagate mean.
         mu = self.functional(
-            input=input[0],
+            input=input.mu,
             weight=weight_mean,
             bias=bias_mean,
         )
 
         # Propagate variance.
         if weight_rho is None:
-            if input[1] is None:
+            if input.var is None:
                 # No parameter variance and no input variance, so output has no variance.
                 var = None
             else:
                 var = self.functional(
-                    input=input[1],
+                    input=input.var,
                     weight=weight_mean**2,
                 )
         else:
             # First term accounts for parameter variance, second term propagates input variance.
             weight_var = module.scale_tform(weight_rho) ** 2
             var = self.functional(
-                input=input[0] ** 2,
+                input=input.mu**2,
                 weight=weight_var,
                 bias=(None if bias_rho is None else module.scale_tform(bias_rho) ** 2),
             )
-            if input[1] is not None:
+            if input.var is not None:
                 var += self.functional(
-                    input=input[1],
+                    input=input.var,
                     weight=weight_mean**2 + weight_var,
                 )
 
@@ -297,8 +299,8 @@ class ConvNd(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable[torch.Tensor],
-    ) -> Iterable[torch.Tensor]:
+        input: types.MuVar,
+    ) -> types.MuVar:
         """Analytical moment propagation through layer."""
         # Modify input and prepare functional arguments.
         if module._module.padding_mode != "zeros":
@@ -333,7 +335,7 @@ class ConvNd(MomentPropagator):
 
         # Propagate mean.
         mu = self.functional(
-            input=input[0],
+            input=input.mu,
             weight=weight_mean,
             bias=bias_mean,
             **functional_kwargs,
@@ -341,12 +343,12 @@ class ConvNd(MomentPropagator):
 
         # Propagate variance.
         if weight_rho is None:
-            if input[1] is None:
+            if input.var is None:
                 # No parameter variance and no input variance, so output has no variance.
                 var = None
             else:
                 var = self.functional(
-                    input=input[1],
+                    input=input.var,
                     weight=weight_mean**2,
                     bias=None,
                     **functional_kwargs,
@@ -355,14 +357,14 @@ class ConvNd(MomentPropagator):
             # First term accounts for parameter variance, second term propagates input variance.
             weight_var = module.scale_tform(weight_rho) ** 2
             var = self.functional(
-                input=input[0] ** 2,
+                input=input.mu**2,
                 weight=weight_var,
                 bias=(None if bias_rho is None else module.scale_tform(bias_rho) ** 2),
                 **functional_kwargs,
             )
-            if input[1] is not None:
+            if input.var is not None:
                 var += self.functional(
-                    input=input[1],
+                    input=input.var,
                     weight=weight_mean**2 + weight_var,
                     bias=None,
                     **functional_kwargs,
@@ -423,9 +425,9 @@ class ConvTransposeNd(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable[torch.Tensor],
+        input: types.MuVar,
         output_size: Optional[List[int]] = None,
-    ) -> Iterable[torch.Tensor]:
+    ) -> types.MuVar:
         """Analytical moment propagation through layer."""
         # Prepare functional arguments.
         output_padding = module._module._output_padding(
@@ -456,7 +458,7 @@ class ConvTransposeNd(MomentPropagator):
 
         # Propagate mean.
         mu = self.functional(
-            input=input[0],
+            input=input.mu,
             weight=weight_mean,
             bias=bias_mean,
             **functional_kwargs,
@@ -464,12 +466,12 @@ class ConvTransposeNd(MomentPropagator):
 
         # Propagate variance.
         if weight_rho is None:
-            if input[1] is None:
+            if input.var is None:
                 # No parameter variance and no input variance, so output has no variance.
                 var = None
             else:
                 var = self.functional(
-                    input=input[1],
+                    input=input.var,
                     weight=weight_mean**2,
                     bias=None,
                     **functional_kwargs,
@@ -478,14 +480,14 @@ class ConvTransposeNd(MomentPropagator):
             # First term accounts for parameter variance, second term propagates input variance.
             weight_var = module.scale_tform(weight_rho) ** 2
             var = self.functional(
-                input=input[0] ** 2,
+                input=input.mu**2,
                 weight=weight_var,
                 bias=(None if bias_rho is None else module.scale_tform(bias_rho) ** 2),
                 **functional_kwargs,
             )
-            if input[1] is not None:
+            if input.var is not None:
                 var += self.functional(
-                    input=input[1],
+                    input=input.var,
                     weight=weight_mean**2 + weight_var,
                     bias=None,
                     **functional_kwargs,
@@ -537,19 +539,19 @@ class AvgPoolNd(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable[torch.Tensor],
-    ) -> Iterable[torch.Tensor]:
+        input: types.MuVar,
+    ) -> types.MuVar:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
         kernel_size = module._module.kernel_size
         mu = self.functional(
-            input=input[0],
+            input=input.mu,
             kernel_size=kernel_size,
             stride=module._module.stride,
             padding=module._module.padding,
         )
-        if input[1] is None:
+        if input.var is None:
             var = None
         else:
             n_pool = (
@@ -559,7 +561,7 @@ class AvgPoolNd(MomentPropagator):
             )
             var = (
                 self.functional(
-                    input=input[1],
+                    input=input.var,
                     kernel_size=kernel_size,
                     stride=module._module.stride,
                     padding=module._module.padding,
@@ -618,26 +620,26 @@ class ReLUa(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable[torch.Tensor],
-    ) -> Iterable[torch.Tensor]:
+        input: types.MuVar,
+    ) -> types.MuVar:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
-        if input[1] is None:
+        if input.var is None:
             # With no input variance we can apply the ReLU directly.
-            mu = module(input[0])
+            mu = module(input.mu)
             var = None
         else:
             # Compute the mean of the output assuming input independent normal random variables.
-            s_input = input[1].sqrt()
-            alpha = torch.clamp(-input[0] / s_input, min=-3.0, max=3.0)
+            s_input = input.var.sqrt()
+            alpha = torch.clamp(-input.mu / s_input, min=-3.0, max=3.0)
             phi = 0.5 * (1.0 + torch.erf(alpha / np.sqrt(2.0)))  # P(input<0)
             psi = torch.exp(-0.5 * (alpha.pow(2))) / np.sqrt(2.0 * np.pi)
-            ev_gt0 = input[0] + s_input * psi / (1.0 - phi)
+            ev_gt0 = input.mu + s_input * psi / (1.0 - phi)
             mu = (1.0 - phi) * ev_gt0
 
             # Compute the variance of the output assuming input independent normal random variables.
-            var_gt0 = input[1] * (
+            var_gt0 = input.var * (
                 1.0 + (alpha * psi / (1.0 - phi)) - (psi / (1.0 - phi)).pow(2)
             )
             var = (1 - phi) * var_gt0 + phi * (1 - phi) * ev_gt0.pow(2)
@@ -666,29 +668,29 @@ class LeakyReLUa(MomentPropagator):
     def forward(
         self,
         module: BayesianModule,
-        input: Iterable[torch.Tensor],
-    ) -> Iterable[torch.Tensor]:
+        input: types.MuVar,
+    ) -> types.MuVar:
         """Analytical moment propagation through layer."""
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
-        if input[1] is None:
+        if input.var is None:
             # With no input variance we can apply the ReLU directly.
-            mu = module(input[0])
+            mu = module(input.mu)
             var = None
         else:
             # Compute the mean of the output assuming input independent normal random variables.
             l = -module._module.negative_slope
-            s_input = input[1].sqrt()
-            alpha = torch.clamp(-input[0] / s_input, min=-3.0, max=3.0)
+            s_input = input.var.sqrt()
+            alpha = torch.clamp(-input.mu / s_input, min=-3.0, max=3.0)
             phi = 0.5 * (1.0 + torch.erf(alpha / np.sqrt(2.0)))  # P(input<0)
             psi = torch.exp(-0.5 * (alpha.pow(2))) / np.sqrt(2.0 * np.pi)
-            ev_lt0 = input[0] - s_input * psi / phi
-            ev_gt0 = input[0] + s_input * psi / (1.0 - phi)
+            ev_lt0 = input.mu - s_input * psi / phi
+            ev_gt0 = input.mu + s_input * psi / (1.0 - phi)
             mu = l * phi * ev_lt0 + (1.0 - phi) * ev_gt0
 
             # Compute the variance of the output assuming input independent normal random variables.
-            var_lt0 = input[1] * (1.0 - (alpha * psi / phi) - (psi / phi).pow(2))
-            var_gt0 = input[1] * (
+            var_lt0 = input.var * (1.0 - (alpha * psi / phi) - (psi / phi).pow(2))
+            var_gt0 = input.var * (
                 1.0 + (alpha * psi / (1.0 - phi)) - (psi / (1.0 - phi)).pow(2)
             )
             var = (
@@ -720,15 +722,15 @@ if __name__ == "__main__":
     lr = LeakyReLUa()
 
     # Propagate example data through layer.
-    input = (torch.tensor([1.23])[None, :], torch.tensor([3.21])[None, :])
+    input = types.MuVar(torch.tensor([1.23])[None, :], torch.tensor([3.21])[None, :])
     out_mc, samples_mc = mc(module=layer, input=input, return_samples=True)
     out_ut, samples_ut = ut(module=layer, input=input, return_samples=True)
     out_lr = lr(module=layer, input=input)
 
     # Plot results.
     x = torch.linspace(
-        (input[0] - 3.0 * torch.sqrt(input[1])).squeeze(),
-        (input[0] + 3.0 * torch.sqrt(input[1])).squeeze(),
+        (input.mu - 3.0 * torch.sqrt(input.var)).squeeze(),
+        (input.mu + 3.0 * torch.sqrt(input.var)).squeeze(),
         1000,
     )
     fig, ax = plt.subplots()
@@ -736,7 +738,7 @@ if __name__ == "__main__":
     ax.plot(
         x,
         torch.distributions.Normal(
-            loc=out_mc[0].squeeze(), scale=out_mc[1].squeeze().sqrt()
+            loc=out_mc.mu.squeeze(), scale=out_mc.var.squeeze().sqrt()
         )
         .log_prob(x)
         .exp(),
@@ -745,7 +747,7 @@ if __name__ == "__main__":
     ax.plot(
         x,
         torch.distributions.Normal(
-            loc=out_ut[0].squeeze(), scale=out_ut[1].squeeze().sqrt()
+            loc=out_ut.mu.squeeze(), scale=out_ut.var.squeeze().sqrt()
         )
         .log_prob(x)
         .exp(),
@@ -754,7 +756,7 @@ if __name__ == "__main__":
     ax.plot(
         x,
         torch.distributions.Normal(
-            loc=out_lr[0].squeeze(), scale=out_lr[1].squeeze().sqrt()
+            loc=out_lr.mu.squeeze(), scale=out_lr.var.squeeze().sqrt()
         )
         .log_prob(x)
         .exp(),

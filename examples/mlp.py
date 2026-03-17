@@ -76,7 +76,7 @@ for epoch in range(n_epochs):
         out = bnn(types.MuVar(batch[0].to(device)))
 
         # Compute loss.
-        loss = loss_fn(model=bnn, input=out[0], target=batch[1].to(device), var=out[1])
+        loss = loss_fn(model=bnn, input=out.mu, target=batch[1].to(device), var=out.var)
 
         # Update model.
         loss.backward()
@@ -87,8 +87,8 @@ for epoch in range(n_epochs):
         within_1sigma_epoch.append(
             statistics.compute_coverage(
                 observations=batch[1].to(device),
-                mu=out[0],
-                sigma=out[1].sqrt(),
+                mu=out.mu,
+                sigma=out.var.sqrt(),
                 alphas=torch.tensor([1.0]),
             ).item()
         )
@@ -109,8 +109,8 @@ bnn = bnn.to("cpu")
 input = []
 observations = []
 n_examples = 1000
-dataset.data_generator.simulator_kwargs_generator["x"] = lambda: 2.0 * (
-    torch.rand(1) - 0.5
+dataset.data_generator.simulator_kwargs_generator["x"] = lambda: (
+    2.0 * (torch.rand(1) - 0.5)
 )
 for n in range(n_examples):
     data = dataset[n]
@@ -122,8 +122,8 @@ with torch.no_grad():
     output = bnn(types.MuVar(input))
 
 x, sort_inds = torch.sort(input.cpu().squeeze())
-y = output[0].cpu().squeeze()[sort_inds]
-yerr = output[1].cpu().sqrt().squeeze()[sort_inds]
+y = output.mu.cpu().squeeze()[sort_inds]
+yerr = output.var.cpu().sqrt().squeeze()[sort_inds]
 y_gt = data_generator.simulator(x=x, **data_generator.simulator_kwargs)
 yerr_gt = noise_tform.noise_fxn_kwargs_generator["sigma"](x)
 observations = observations.cpu().squeeze()[sort_inds]

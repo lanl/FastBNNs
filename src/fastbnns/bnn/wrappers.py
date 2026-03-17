@@ -615,11 +615,11 @@ class BroadcastModule(torch.nn.Module):
         """Forward pass through layer."""
         if isinstance(input, MuVar):
             # Propagate mean and variance through layer.
-            if input[1] is None:
+            if input.var is None:
                 # No input variance so we only need to operate on mean.
-                out = MuVar(self.module(input[0]), None)
+                out = MuVar(self.module(input.mu), None)
             else:
-                out = MuVar(self.module(input[0]), self.module(input[1]))
+                out = MuVar(self.module(input.mu), self.module(input.var))
         else:
             # Compute forward pass with a random sample of parameters.
             out = self.module(input)
@@ -630,7 +630,7 @@ class BroadcastModule(torch.nn.Module):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    from inference import Linear
+    from .inference import Linear
 
     # Basic usage example of BayesianLinear.
     in_features = 3

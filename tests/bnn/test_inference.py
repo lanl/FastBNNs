@@ -53,7 +53,7 @@ def test_inference() -> None:
         MonteCarlo(n_samples=n_samples),
         UnscentedTransform(),
     ]
-    out_mc_manual = torch.stack([bayes_module(x[0]) for _ in range(n_samples)])
+    out_mc_manual = torch.stack([bayes_module(x.mu) for _ in range(n_samples)])
     out_mc_mean = out_mc_manual.mean()
     out_mc_stdev = out_mc_manual.std()
     out = []
@@ -68,10 +68,10 @@ def test_inference() -> None:
 
         # Verify outputs are consistent with manual Monte Carlo result.
         tol = 1.0e-1  # chosen empirically
-        assert (out[0] - out_mc_mean).abs() < tol, (
+        assert (out.mu - out_mc_mean).abs() < tol, (
             f"{type(propagator).__name__} not returning expected mean!"
         )
-        assert (out[1].sqrt() - out_mc_stdev).abs() < tol, (
+        assert (out.var.sqrt() - out_mc_stdev).abs() < tol, (
             f"{type(propagator).__name__} not returning expected variance!"
         )
 

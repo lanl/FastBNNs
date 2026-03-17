@@ -45,7 +45,7 @@ class BNNLightning(L.LightningModule):
         out = self.bnn(types.MuVar(batch[0]))
 
         # Compute loss.
-        loss = self.loss(model=self.bnn, input=out[0], target=batch[1], var=out[1])
+        loss = self.loss(model=self.bnn, input=out.mu, target=batch[1], var=out.var)
 
         # Log results.
         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
@@ -58,7 +58,7 @@ class BNNLightning(L.LightningModule):
         out = self.bnn(types.MuVar(batch[0]))
 
         # Compute loss.
-        loss = self.loss(model=self.bnn, input=out[0], target=batch[1], var=out[1])
+        loss = self.loss(model=self.bnn, input=out.mu, target=batch[1], var=out.var)
 
         # Log results.
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
