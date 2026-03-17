@@ -30,7 +30,7 @@ def test_wrappers() -> None:
     # Test the forward pass.
     batch_size = 4
     x = MuVar(torch.randn((batch_size, in_features)))
-    out_orig = module(x[0])
+    out_orig = module(x.mu)
     out_bayes = bayes_module(x)
     assert out_orig.shape == out_bayes.shape, (
         "Forward pass of `BayesianModule` not returning expected output shape!"

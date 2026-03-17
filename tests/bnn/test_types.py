@@ -30,17 +30,17 @@ def test_types() -> None:
     # Verify the math of some basic operations.
     ab_sum = a + b
     tol = 1.0e-4
-    assert ((ab_sum[0] - (a[0] + b[0])).abs() < tol).all(), (
+    assert ((ab_sum.mu - (a.mu + b.mu)).abs() < tol).all(), (
         "Addition on type `MuVar` not producing expected mean!"
     )
-    assert ((ab_sum[1] - (a[1] + b[1])).abs() < tol).all(), (
+    assert ((ab_sum.var - (a.var + b.var)).abs() < tol).all(), (
         "Addition on type `MuVar` not producing expected variance!"
     )
     ab_mul = a @ b
-    assert ((ab_mul[0] - (a[0] @ b[0])).abs() < tol).all(), (
+    assert ((ab_mul.mu - (a.mu @ b.mu)).abs() < tol).all(), (
         "Matrix multiplication on type `MuVar` not producing expected mean!"
     )
     assert (
-        (ab_mul[1] - (a[1] @ b[1] + (a[0] ** 2) @ b[1] + a[1] @ (b[0] ** 2))).abs()
+        (ab_mul.var - (a.var @ b.var + (a.mu**2) @ b.var + a.var @ (b.mu**2))).abs()
         < tol
     ).all(), "Matrix multiplication on type `MuVar` not producing expected mean!"
