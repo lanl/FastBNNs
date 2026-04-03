@@ -249,11 +249,10 @@ class Linear(MomentPropagator):
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
         # Reorganize parameters.
-        module_params = module._module_params
-        bias_mean = module_params.get("bias_mean", None)
-        bias_rho = module_params.get("bias_rho", None)
-        weight_mean = module_params["weight_mean"]
-        weight_rho = module_params["weight_rho"]
+        bias_mean = module._module.bias
+        weight_mean = module._module.weight
+        bias_rho = module._module_params.get("bias_rho", None)
+        weight_rho = module._module_params["weight_rho"]
 
         # Propagate mean.
         mu = self.functional(
@@ -327,11 +326,10 @@ class ConvNd(MomentPropagator):
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
         # Reorganize parameters.
-        module_params = module._module_params
-        bias_mean = module_params.get("bias_mean", None)
-        bias_rho = module_params.get("bias_rho", None)
-        weight_mean = module_params["weight_mean"]
-        weight_rho = module_params["weight_rho"]
+        bias_mean = module._module.bias
+        weight_mean = module._module.weight
+        bias_rho = module._module_params.get("bias_rho", None)
+        weight_rho = module._module_params["weight_rho"]
 
         # Propagate mean.
         mu = self.functional(
@@ -450,11 +448,10 @@ class ConvTransposeNd(MomentPropagator):
         ## Compute analytical result under mean-field approximation following
         ## https://doi.org/10.48550/arXiv.2402.14532
         # Reorganize parameters.
-        module_params = module._module_params
-        bias_mean = module_params.get("bias_mean", None)
-        bias_rho = module_params.get("bias_rho", None)
-        weight_mean = module_params["weight_mean"]
-        weight_rho = module_params["weight_rho"]
+        bias_mean = module._module.bias
+        weight_mean = module._module.weight
+        bias_rho = module._module_params.get("bias_rho", None)
+        weight_rho = module._module_params["weight_rho"]
 
         # Propagate mean.
         mu = self.functional(

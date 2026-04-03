@@ -367,14 +367,10 @@ class BayesianModule(BayesianModuleBase):
         _module_params = torch.nn.ParameterDict()
         self._learn_var = learn_var
         if (len(module_params) > 0) and learn_var:
-            for key, _ in module_params:
-                _module_params[key + "_mean"] = getattr(module, key)
-                _module_params[key + "_rho"] = torch.nn.Parameter(
-                    torch.empty_like(_module_params[key + "_mean"])
-                )
+            for key, val in module_params:
+                _module_params[key + "_rho"] = torch.nn.Parameter(torch.empty_like(val))
         else:
-            for key, _ in module_params:
-                _module_params[key + "_mean"] = getattr(module, key)
+            for key, val in module_params:
                 _module_params[key + "_rho"] = None
         self._module = module
         self._module_params = _module_params
@@ -391,17 +387,15 @@ class BayesianModule(BayesianModuleBase):
         if samplers_init is None:
             # Prepare (relatively arbitrary) default samplers.
             samplers_init = {}
-            for key, val in _module_params.items():
-                if "_mean" in key:
-                    samplers_init[key] = dist.Uniform(
-                        low=-1.0 / np.sqrt(val.shape[-1]),
-                        high=1.0 / np.sqrt(val.shape[-1]),
-                    )
-                else:
-                    samplers_init[key] = dist.Uniform(
-                        low=-8.0,
-                        high=-2.0,
-                    )
+            for key, val in module_params:
+                samplers_init[key + "_rho"] = dist.Uniform(
+                    low=-8.0,
+                    high=-2.0,
+                )
+                samplers_init[key + "_mean"] = dist.Uniform(
+                    low=-1.0 / np.sqrt(val.shape[-1]),
+                    high=1.0 / np.sqrt(val.shape[-1]),
+                )
         self.samplers_init = samplers_init
         self.resample_mean = resample_mean
         if learn_var:
@@ -450,7 +444,7 @@ class BayesianModule(BayesianModuleBase):
             return None
         else:
             return self._samplers[name](
-                loc=self._module_params[name + "_mean"],
+                loc=getattr(self._module, name),
                 scale=self.scale_tform(self._module_params[name + "_rho"]),
             )
 
@@ -474,7 +468,7 @@ class BayesianModule(BayesianModuleBase):
             if val is None:
                 # This parameter is not treated as a distribution so we can
                 # directly return the mean value.
-                params[key] = self._module_params[key + "_mean"]
+                params[key] = getattr(self._module, key)
             else:
                 params[key] = val.rsample()
 
@@ -508,13 +502,21 @@ class BayesianModule(BayesianModuleBase):
 
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""
-        for key, param in self._module_params.items():
-            if param is not None:
-                # If this is a parameter mean, verify self.resample_mean flag
-                # before resampling.
-                if ("_mean" not in key) or self.resample_mean:
-                    param.data = self.samplers_init[key].sample(
-                        sample_shape=param.shape
+        with torch.no_grad():
+            for key, sampler in self.samplers_init.items():
+                if ("_mean" in key) and self.resample_mean:
+                    # "_mean" parameters are referring to the original module weights.
+                    module_param_name = key.replace("_mean", "")
+                    getattr(self._module, module_param_name).copy_(
+                        sampler.sample(
+                            sample_shape=getattr(self._module, module_param_name).shape
+                        ),
+                    )
+                else:
+                    self._module_params[key].copy_(
+                        self.samplers_init[key].sample(
+                            sample_shape=self._module_params[key].data.shape
+                        )
                     )
 
     def compute_kl_divergence(
