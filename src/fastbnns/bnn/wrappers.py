@@ -216,21 +216,22 @@ def convert_to_nn(
     Args:
         model: Bayesian NN to be converted back to a standard NN.
     """
-    # Search for modules of `model` to convert, removing stem modules from the
-    # list (we just want the leaf modules that contain parameters).
+    # Search for modules of `model` to convert.
     model = copy.deepcopy(bnn)
     module_names = [n for n, _ in model.named_modules()]
-    leaf_names = isolate_leaf_module_names(module_names)
 
     # Remove BNN-specific modules from list.
     bnn_module_names = ["_module_params", "_moment_propagator"]
-    leaf_names = [
-        leaf for leaf in leaf_names if not any([bn in leaf for bn in bnn_module_names])
+    module_names = [
+        m for m in module_names if not any([bn in m for bn in bnn_module_names])
     ]
+
+    # Isolate leaf modules.
+    leaf_names = isolate_leaf_module_names(module_names)
 
     # Replace Bayesian leaf modules with standard counterparts.
     for leaf in leaf_names:
-        # If `leaf` is a named `_module` parameter, we'll reset the module to the `_module` leaf.
+        # If `leaf` is a `_module`, we'll reset the module to the `_module` leaf.
         # If the module is a BroadcastModule, we just need to remove the wrapper.
         module = model.get_submodule(leaf)
         leaf_split = leaf.split(".")
