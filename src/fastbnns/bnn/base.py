@@ -86,7 +86,7 @@ class BNN(torch.nn.Module):
         # Convert the neural network to a Bayesian neural network.
         if isinstance(nn, torch.nn.Module):
             bnn = nn if convert_in_place else copy.deepcopy(nn)
-            convert_to_bnn_(nn=bnn, *args, **kwargs)
+            convert_to_bnn_(model=bnn, *args, **kwargs)
         elif isinstance(nn, laplace.DiagLaplace):
             # Convert nn.model to a BNN.
             bnn = nn.model if convert_in_place else copy.deepcopy(nn.model)
