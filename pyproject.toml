@@ -8,14 +8,12 @@ authors = [
 license = "BSD-3-Clause"
 license-files = ["LICENSE.md"]
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
-dependencies = [
-    "scipy",
-]
+requires-python = ">=3.10"
+dependencies = ["torch>=2.6.0"]
 
 [project.optional-dependencies]
-plot = ["matplotlib"]
-examples = ["lightning"]
+examples = ["lightning", "matplotlib", "scipy"]
+laplace = ["laplace-torch"]
 
 [project.urls]
 Homepage = "https://github.com/lanl/FastBNNs"

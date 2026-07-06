@@ -26,7 +26,7 @@ nn = mlp.MLP(
     activation=torch.nn.LeakyReLU,
 )
 bnn = base.BNN(nn=nn, convert_in_place=False)
-device = torch.device("cuda")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 bnn = bnn.to(device)
 
 # Define a prior (this one applies to all parameters in the model).

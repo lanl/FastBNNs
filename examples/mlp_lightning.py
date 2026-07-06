@@ -62,7 +62,12 @@ bnn_lightning = lightning_wrappers.BNNLightning(bnn=bnn, loss=loss_fn)
 
 # Train.
 n_epochs = 100
-trainer = L.Trainer(max_epochs=n_epochs, check_val_every_n_epoch=n_epochs)
+trainer = L.Trainer(
+    max_epochs=n_epochs,
+    check_val_every_n_epoch=n_epochs,
+    accelerator="auto",
+    devices="auto",
+)
 trainer.fit(
     model=bnn_lightning, train_dataloaders=dataloader, val_dataloaders=dataloader
 )
