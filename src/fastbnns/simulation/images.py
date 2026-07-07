@@ -1,19 +1,19 @@
 """Functionality for simulating image data."""
 
 from collections.abc import Iterable
+import math
 from typing import Union
 
-import numpy as np
 import scipy.stats
 import torch
 
 
 def gaussian_blobs(
-    mu: np.array,
-    sigma: np.array,
-    amplitude: Union[float, np.array],
+    mu: torch.tensor,
+    sigma: torch.tensor,
+    amplitude: Union[float, torch.tensor],
     im_size: Iterable,
-) -> np.array:
+) -> torch.tensor:
     """Noise-free image of a (possibly unnormalized) 2D isotropic Gaussian mixture model.
 
     Generate a noise-free image of the sum of 2D isotropic Gaussians in the domain
@@ -27,19 +27,19 @@ def gaussian_blobs(
     """
     # Reshape inputs.
     if len(sigma) != len(mu):
-        sigma = sigma * np.ones_like(mu)
+        sigma = sigma * torch.ones_like(mu)
     if isinstance(amplitude, float):
-        amplitude = amplitude * np.ones(mu.shape[0])
+        amplitude = amplitude * torch.ones(mu.shape[0])
 
     # Compute output image.
-    y = np.arange(im_size[0]) - im_size[0] / 2 + 0.5
-    x = np.arange(im_size[1]) - im_size[1] / 2 + 0.5
-    out = np.zeros((1, *im_size), dtype=np.float32)
+    y = torch.arange(im_size[0]) - im_size[0] / 2 + 0.5
+    x = torch.arange(im_size[1]) - im_size[1] / 2 + 0.5
+    out = torch.zeros((1, *im_size), dtype=torch.float32)
     for n in range(len(mu)):
         out += (
             2.0
-            * np.pi
-            * np.prod(sigma[n])
+            * torch.pi
+            * math.prod(sigma[n])
             * amplitude[n]
             * (
                 scipy.stats.norm.pdf(y, loc=mu[n][0], scale=sigma[n][0])[:, None]
@@ -79,19 +79,19 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     im = gaussian_blobs(
-        mu=np.array([[0.0, 0.0], [-1.0, 3.0]]),
-        sigma=np.array([[0.7, 1.0], [0.5, 0.5]]),
-        amplitude=np.array([1.0, 0.7]),
+        mu=torch.tensor([[0.0, 0.0], [-1.0, 3.0]]),
+        sigma=torch.tensor([[0.7, 1.0], [0.5, 0.5]]),
+        amplitude=torch.tensor([1.0, 0.7]),
         im_size=(8, 8),
     )
     fig, ax = plt.subplots()
-    plt.imshow(im, cmap="gray", extent=([-3.5, 3.5, 3.5, -3.5]))
+    plt.imshow(im[0], cmap="gray", extent=([-3.5, 3.5, 3.5, -3.5]))
     plt.show()
 
     im = gaussian_blobs(
-        mu=np.array([[0.0, 0.0]]),
-        sigma=np.array([[1.0, 1.0]]),
-        amplitude=np.array([1.0]),
+        mu=torch.tensor([[0.0, 0.0]]),
+        sigma=torch.tensor([[1.0, 1.0]]),
+        amplitude=torch.tensor([1.0]),
         im_size=(8, 8),
     )
     print(im.max())

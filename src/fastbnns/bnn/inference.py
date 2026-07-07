@@ -9,9 +9,9 @@ for that layer if available.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import math
 from typing import List, Optional, TYPE_CHECKING
 
-import numpy as np
 import torch
 import torch.distributions as dist
 
@@ -633,8 +633,8 @@ class ReLUa(MomentPropagator):
             # Compute the mean of the output assuming input independent normal random variables.
             s_input = input.var.sqrt()
             alpha = torch.clamp(-input.mu / s_input, min=-3.0, max=3.0)
-            phi = 0.5 * (1.0 + torch.erf(alpha / np.sqrt(2.0)))  # P(input<0)
-            psi = torch.exp(-0.5 * (alpha.pow(2))) / np.sqrt(2.0 * np.pi)
+            phi = 0.5 * (1.0 + torch.erf(alpha / math.sqrt(2.0)))  # P(input<0)
+            psi = torch.exp(-0.5 * (alpha.pow(2))) / math.sqrt(2.0 * math.pi)
             ev_gt0 = input.mu + s_input * psi / (1.0 - phi)
             mu = (1.0 - phi) * ev_gt0
 
@@ -682,8 +682,8 @@ class LeakyReLUa(MomentPropagator):
             l = -module._module.negative_slope
             s_input = input.var.sqrt()
             alpha = torch.clamp(-input.mu / s_input, min=-3.0, max=3.0)
-            phi = 0.5 * (1.0 + torch.erf(alpha / np.sqrt(2.0)))  # P(input<0)
-            psi = torch.exp(-0.5 * (alpha.pow(2))) / np.sqrt(2.0 * np.pi)
+            phi = 0.5 * (1.0 + torch.erf(alpha / math.sqrt(2.0)))  # P(input<0)
+            psi = torch.exp(-0.5 * (alpha.pow(2))) / math.sqrt(2.0 * math.pi)
             ev_lt0 = input.mu - s_input * psi / phi
             ev_gt0 = input.mu + s_input * psi / (1.0 - phi)
             mu = l * phi * ev_lt0 + (1.0 - phi) * ev_gt0

@@ -2,7 +2,6 @@
 
 import lightning as L
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
 from fastbnns.bnn import base, losses, priors, types
@@ -33,7 +32,7 @@ prior = priors.Distribution(
 # Define a dataset.
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
+    simulator_kwargs={"coefficients": torch.tensor([0.0, 1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
@@ -62,7 +61,12 @@ bnn_lightning = lightning_wrappers.BNNLightning(bnn=bnn, loss=loss_fn)
 
 # Train.
 n_epochs = 100
-trainer = L.Trainer(max_epochs=n_epochs, check_val_every_n_epoch=n_epochs)
+trainer = L.Trainer(
+    max_epochs=n_epochs,
+    check_val_every_n_epoch=n_epochs,
+    accelerator="auto",
+    devices="auto",
+)
 trainer.fit(
     model=bnn_lightning, train_dataloaders=dataloader, val_dataloaders=dataloader
 )
