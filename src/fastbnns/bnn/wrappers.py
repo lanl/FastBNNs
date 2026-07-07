@@ -3,11 +3,11 @@
 from abc import ABC, abstractmethod
 import copy
 import functools
+import math
 import re
 import sys
 from typing import Any, Optional, Union
 
-import numpy as np
 import torch
 import torch.distributions as dist
 
@@ -395,8 +395,8 @@ class BayesianModule(BayesianModuleBase):
             for key, val in _module_params.items():
                 if "_mean" in key:
                     samplers_init[key] = dist.Uniform(
-                        low=-1.0 / np.sqrt(val.shape[-1]),
-                        high=1.0 / np.sqrt(val.shape[-1]),
+                        low=-1.0 / math.sqrt(val.shape[-1]),
+                        high=1.0 / math.sqrt(val.shape[-1]),
                     )
                 else:
                     samplers_init[key] = dist.Uniform(
@@ -671,7 +671,7 @@ if __name__ == "__main__":
         x,
         (
             torch.exp(-0.5 * (x - output_det[0]) ** 2 / output_det[1])
-            / torch.sqrt(2.0 * np.pi * output_det[1])
+            / torch.sqrt(2.0 * torch.pi * output_det[1])
         )
         .detach()
         .cpu()
@@ -682,7 +682,7 @@ if __name__ == "__main__":
         x,
         (
             torch.exp(-0.5 * (x - output_mc[0]) ** 2 / output_mc[1])
-            / torch.sqrt(2.0 * np.pi * output_mc[1])
+            / torch.sqrt(2.0 * torch.pi * output_mc[1])
         )
         .detach()
         .cpu()

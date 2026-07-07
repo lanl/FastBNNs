@@ -1,6 +1,7 @@
 """Example of training a Bayesian CNN."""
 
 import copy
+import math
 import random
 
 import matplotlib.pyplot as plt
@@ -37,7 +38,7 @@ nn = torch.nn.Sequential(
     ),
     torch.nn.ELU(),
     torch.nn.Flatten(),
-    torch.nn.Linear(in_features=np.prod(im_size) * hidden_features, out_features=2),
+    torch.nn.Linear(in_features=math.prod(im_size) * hidden_features, out_features=2),
     InverseTransformSampling(
         distribution=x_dist,
         learn_alpha=True,
@@ -58,14 +59,14 @@ prior = priors.Distribution(
 # Define a dataset.
 data_generator = generators.Generator(
     simulator=images.gaussian_blobs,
-    simulator_kwargs={"im_size": im_size, "sigma": np.array([1.0, 1.0])},
+    simulator_kwargs={"im_size": im_size, "sigma": torch.tensor([1.0, 1.0])},
     simulator_kwargs_generator={
         "mu": lambda: torch.clamp(
             x_dist.sample(sample_shape=(1, 2)),
             min=-(im_size[0] - 1) / 2,
             max=(im_size[0] - 1) / 2,
         ),
-        "amplitude": lambda: np.array([np.random.poisson(lam=100.0)]),
+        "amplitude": lambda: torch.poisson(input=torch.tensor([100.0])),
     },
 )
 noise_tform = observation.NoiseTransform(

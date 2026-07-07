@@ -1,15 +1,12 @@
 """Functionality for simulating observations of random variables."""
 
 from collections.abc import Callable
-from typing import Union
+import math
 
-import numpy as np
 import torch
 
 
-def add_read_noise(
-    signal: Union[float, np.array], sigma: Union[float, np.array]
-) -> Union[float, np.array]:
+def add_read_noise(signal: torch.tensor, sigma: torch.tensor) -> torch.tensor:
     """Noisy realization of `signal` (read noise).
 
     Args:
@@ -17,12 +14,10 @@ def add_read_noise(
         sigma: Standard deviation of zero-mean Normally distributed read noise. Can be
             homoscedastic (scalar) or heteroscedastic (array matching len(signal)).
     """
-    return signal + sigma * np.float32(np.random.randn(*signal.shape))
+    return signal + sigma * torch.randn(*signal.shape, dtype=signal.dtype)
 
 
-def sensor_noise(
-    signal: Union[float, np.array], sigma: Union[float, np.array]
-) -> Union[float, np.array]:
+def sensor_noise(signal: torch.tensor, sigma: torch.tensor) -> torch.tensor:
     """Noisy realization of `signal` (read noise + shot noise).
 
     Args:
@@ -30,7 +25,7 @@ def sensor_noise(
         sigma: Standard deviation of zero mean Normally distributed read noise. Can be
             homoscedastic (scalar) or heteroscedastic (array matching len(signal)).
     """
-    return add_read_noise(signal=np.float32(np.random.poisson(signal)), sigma=sigma)
+    return add_read_noise(signal=torch.poisson(signal), sigma=sigma)
 
 
 class NoiseTransform(torch.nn.Module):
@@ -61,7 +56,7 @@ class NoiseTransform(torch.nn.Module):
         self.noise_fxn_kwargs = noise_fxn_kwargs
         self.noise_fxn_kwargs_generator = noise_fxn_kwargs_generator
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.tensor) -> torch.tensor:
         """Forward pass to generate noisy `x`."""
         # Generate x-dependent arguments and merge with noise_fxn_kwargs.
         generated_kwargs = {
@@ -69,7 +64,7 @@ class NoiseTransform(torch.nn.Module):
             for key, value_gen in self.noise_fxn_kwargs_generator.items()
         }
         noise_fxn_kwargs = self.noise_fxn_kwargs | generated_kwargs
-        return torch.tensor(self.noise_fxn(x, **noise_fxn_kwargs))
+        return self.noise_fxn(x, **noise_fxn_kwargs)
 
 
 if __name__ == "__main__":
@@ -100,7 +95,7 @@ if __name__ == "__main__":
     noise_tform = NoiseTransform(
         noise_fxn=add_read_noise,
         noise_fxn_kwargs_generator={
-            "sigma": lambda x: 0.1 + 0.1 * (1.0 + np.sin(2.0 * np.pi * x))
+            "sigma": lambda x: 0.1 + 0.1 * (1.0 + math.sin(2.0 * math.pi * x))
         },
     )
     fig, ax = plt.subplots()

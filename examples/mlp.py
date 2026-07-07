@@ -3,7 +3,6 @@
 import copy
 
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
 from fastbnns.analysis import statistics
@@ -37,7 +36,7 @@ prior = priors.Distribution(
 # Define a dataset.
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
+    simulator_kwargs={"coefficients": torch.tensor([0.0, 1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
@@ -81,7 +80,7 @@ for epoch in range(n_epochs):
         # Update model.
         loss.backward()
         optimizer.step()
-        loss_epoch.append(loss.item())
+        loss_epoch.append(loss)
 
         # Check predictive variance.
         within_1sigma_epoch.append(
@@ -90,16 +89,16 @@ for epoch in range(n_epochs):
                 mu=out.mu,
                 sigma=out.var.sqrt(),
                 alphas=torch.tensor([1.0]),
-            ).item()
+            )
         )
 
-    avg_loss = np.mean(loss_epoch)
+    avg_loss = torch.mean(torch.stack(loss_epoch))
     loss_train.append(avg_loss)
     if avg_loss < best_loss:
         best_loss = avg_loss
         best_model_state_dict = copy.deepcopy(bnn.state_dict())
     print(
-        f"epoch {epoch + 1} of {n_epochs}: loss = {avg_loss}, {100.0 * np.mean(within_1sigma_epoch):.2f}% within 1 st. dev."
+        f"epoch {epoch + 1} of {n_epochs}: loss = {avg_loss}, {100.0 * torch.mean(torch.stack(within_1sigma_epoch)):.2f}% within 1 st. dev."
     )
 
 # Plot some examples.

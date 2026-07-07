@@ -1,14 +1,11 @@
 """Functionality for simulating polynomial data."""
 
 from collections.abc import Iterable
-from typing import Union
 
 import torch
 
 
-def polynomial(
-    x: Union[float, torch.Tensor], coefficients: Iterable = [0.0, 1.0]
-) -> Union[float, torch.Tensor]:
+def polynomial(x: torch.tensor, coefficients: Iterable = [0.0, 1.0]) -> torch.tensor:
     """Basic polynomial.
 
     Args:

@@ -2,7 +2,6 @@
 
 import lightning as L
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
 from fastbnns.bnn import base, losses, priors, types
@@ -33,7 +32,7 @@ prior = priors.Distribution(
 # Define a dataset.
 data_generator = generators.Generator(
     simulator=polynomials.polynomial,
-    simulator_kwargs={"coefficients": np.array([0.0, 1.0])},
+    simulator_kwargs={"coefficients": torch.tensor([0.0, 1.0])},
     simulator_kwargs_generator={"x": lambda: torch.rand(1) - 0.5},
 )
 noise_tform = observation.NoiseTransform(
