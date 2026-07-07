@@ -6,6 +6,11 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+    
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   docs:
@@ -23,8 +28,10 @@ jobs:
 
     - run: sphinx-build -b html docs/source docs/build/html
 
-    - uses: actions/upload-pages-artifact@v3
-      with:
-        path: docs/build/html
+- uses: actions/upload-pages-artifact@v3
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  with:
+    path: docs/build/html
 
-    - uses: actions/deploy-pages@v4
+- uses: actions/deploy-pages@v4
+  if: github.event_name == 'push' && github.ref == 'refs/heads/main'
