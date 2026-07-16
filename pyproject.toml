@@ -12,8 +12,20 @@ requires-python = ">=3.10"
 dependencies = ["torch>=2.6.0"]
 
 [project.optional-dependencies]
-examples = ["lightning", "matplotlib", "scipy"]
-laplace = ["laplace-torch"]
+examples = [
+  "lightning", 
+  "matplotlib", 
+  "scipy"
+]
+laplace = [
+  "curvlinops-for-pytorch<3; python_version < '3.13'",
+  "laplace-torch; python_version < '3.13'"
+]
+comparisons = [
+  "curvlinops-for-pytorch<3; python_version < '3.13'",
+  "laplace-torch; python_version < '3.13'",
+  "bayesian-torch
+]
 
 [project.urls]
 Homepage = "https://github.com/lanl/FastBNNs"

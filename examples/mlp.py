@@ -150,12 +150,4 @@ ax.set_ylim((y_gt.min(), y_gt.max()))
 plt.legend()
 plt.show()
 
-# Plot coverage of predictive variance.
-coverage = statistics.compute_coverage(
-    observations=observations,
-    mu=y,
-    sigma=yerr,
-    alphas=torch.tensor([1.0, 2.0]),
-)
-
 print("Done")
