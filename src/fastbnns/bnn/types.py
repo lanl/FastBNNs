@@ -9,7 +9,7 @@ import torch
 
 
 # List torch functions that we can apply independently to mean and variance.
-SIMPLE_TORCH_FUNCS = [
+SIMPLE_TORCH_FUNCS = {
     torch.cat,
     torch.chunk,
     torch.dsplit,
@@ -47,10 +47,82 @@ SIMPLE_TORCH_FUNCS = [
     torch.nn.functional.upsample_bilinear,
     torch.nn.functional.grid_sample,
     torch.nn.functional.affine_grid,
-]
+}
 
 # Define additional tensor-specific methods that can only be called as x.method(), not torch.method(x).
-TENSOR_METHODS = ["cpu", "cuda", "to", "requires_grad_", "view"]
+TENSOR_METHODS = {"cpu", "cuda", "to", "requires_grad_", "view"}
+
+# Define custom handlers registry for other operations requiring special treatment.
+MUVAR_HANDLERS: dict[Callable[..., Any], Callable[..., Any]] = {}
+
+
+def implements(*functions: Callable[..., Any]):
+    """Register a custom MuVar implementation for one or more torch functions."""
+
+    def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
+        for function in functions:
+            if function in MUVAR_HANDLERS:
+                raise RuntimeError(
+                    f"A MuVar handler is already registered for {function}!"
+                )
+
+            MUVAR_HANDLERS[function] = handler
+
+        return handler
+
+    return decorator
+
+
+# Implement some commonly needed custom handlers.
+@implements(
+    torch.nn.functional.avg_pool1d,
+    torch.nn.functional.avg_pool2d,
+    torch.nn.functional.avg_pool3d,
+)
+def muvar_avg_pool(
+    func,
+    input: torch.tensor,
+    kernel_size: torch.types._int | torch.types._size,
+    stride: torch.types._int | torch.types._size | None = None,
+    padding: torch.types._int | torch.types._size = 0,
+    ceil_mode: bool = False,
+    count_include_pad: bool = True,
+    *args,
+    **kwargs,
+):
+    mu = func(
+        input.mu,
+        kernel_size=kernel_size,
+        stride=stride,
+        padding=padding,
+        ceil_mode=ceil_mode,
+        count_include_pad=count_include_pad,
+        *args,
+        **kwargs,
+    )
+    if input.var is None:
+        var = None
+    else:
+        n_dim = int(func.__name__[-2])
+        n_pool = (
+            kernel_size**n_dim
+            if isinstance(kernel_size, int)
+            else torch.prod(torch.tensor(kernel_size))
+        )
+        var = (
+            func(
+                input=input.var,
+                kernel_size=kernel_size,
+                stride=stride,
+                padding=padding,
+                ceil_mode=ceil_mode,
+                count_include_pad=count_include_pad,
+                *args,
+                **kwargs,
+            )
+            / n_pool
+        )
+    return MuVar(mu, var)
 
 
 class MuVar:
@@ -93,15 +165,48 @@ class MuVar:
             self.mu = mu
             self.var = var
 
+    @staticmethod
+    def _functional_fallback(func: Callable, input: MuVar, *args, **kwargs):
+        """Basic unscented transform fallback for unknown torch functions."""
+        if input.var is None:
+            # Only mean needs to be propagated.
+            mu = func(input.mu)
+            var = None
+        else:
+            # Select sigma points and reshape along batch dimension for batched eval.
+            kappa = 2.0
+            scale = torch.sqrt(torch.tensor(kappa + 1.0))
+            weights = torch.tensor(
+                [kappa / (kappa + 1.0), 0.5 / (kappa + 1.0), 0.5 / (kappa + 1.0)]
+            )
+            scaled_stdev = scale * input.var.sqrt()
+            sigma_points = torch.stack(
+                (input.mu, input.mu - scaled_stdev, input.mu + scaled_stdev)
+            )
+            sp_shape = sigma_points.shape
+            sigma_points = sigma_points.reshape(
+                sp_shape[0] * sp_shape[1], *sp_shape[2:]
+            )
+            weights = weights
+
+            # Propagate mean and variance.
+            samples = func(sigma_points)
+            samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
+            weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
+            mu = (weights * samples).sum(dim=0)
+            var = (weights * ((samples - mu) ** 2)).sum(dim=0)
+
+            return MuVar([mu, var])
+
     @classmethod
     def __torch_function__(
-        self,
+        cls,
         func: Callable,
         types: list,
         args: Any = (),
         kwargs: dict = {},
     ) -> Any:
-        """General overloading function for torch functions."""
+        """General overloading functionality for torch functions."""
 
         # Ensure this is the __torch_function__ we need to call.
         # See https://pytorch.org/docs/stable/notes/extending.html
@@ -148,9 +253,18 @@ class MuVar:
             for k, v in kwargs.items():
                 kwargs_mu[k], kwargs_var[k] = split_muvar(v)
             return MuVar(func(*args_mu, **kwargs_mu), func(*args_var, **kwargs_var))
-        elif hasattr(self, func.__name__):
+        elif func in MUVAR_HANDLERS:
+            # A custom handler was registered in MUVAR_HANDLERS.
+            return MUVAR_HANDLERS[func](func, *args, **kwargs)
+        elif hasattr(cls, func.__name__):
             # A custom implementation of this torch function was defined for this type.
-            return getattr(self, func.__name__)(*args, **kwargs)
+            return getattr(cls, func.__name__)(*args, **kwargs)
+        elif func.__module__ == "torch.nn.functional":
+            # For remaining torch functionals, we'll attempt to use a basic unscented transform.
+            try:
+                return cls._functional_fallback(func, *args, **kwargs)
+            except Exception:
+                return NotImplemented
         else:
             # Return NotImplemented to allow other overrides to be used.
             return NotImplemented
@@ -410,3 +524,5 @@ if __name__ == "__main__":
     print(a @ b)
     print(torch.cat([a, b], dim=-1))
     print(torch.nn.functional.pad(a, [0, 1, 2, 0]))
+    print(torch.nn.functional.avg_pool1d(a, kernel_size=2))
+    print(torch.nn.functional.leaky_relu(a))
