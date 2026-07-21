@@ -9,6 +9,7 @@ for that layer if available.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+import itertools
 import math
 from typing import List, Optional, TYPE_CHECKING
 
@@ -181,6 +182,117 @@ class UnscentedTransform(MomentPropagator):
             return type(input)([mu, var]), samples
         else:
             return type(input)([mu, var])
+
+
+class JointUnscentedTransform(MomentPropagator):
+    """Unscented transform propagation of mean and variance through Bayesian `module`.
+
+    This propagator uses the unscented transform to propagate mean and variance
+    through a Bayesian layer, jointly applying an unscented transform that accounts
+    for the input distribution and the parameter distributions of the layer.
+    """
+
+    def __init__(
+        self,
+        sigma_scale: Optional[float | torch.Tensor] = None,
+        sigma_weights: Optional[list[float] | tuple[float, ...] | torch.Tensor] = None,
+    ):
+        """Initializer for JointUnscentedTransform inference module.
+
+        Args:
+            sigma_scale: Scale factor for sigma points mu -+ sigma_scale*var.sqrt().
+            sigma_weights: Weighting factors corresponding to sigma points.
+        """
+        super().__init__()
+
+        # Set defaults as needed (defaults chosen as in https://doi.org/10.1117/12.280797)
+        kappa = 2.0
+        if sigma_scale is None:
+            sigma_scale = math.sqrt(kappa + 1.0)
+        self._scale = sigma_scale
+
+        if sigma_weights is None:
+            sigma_weights = [
+                kappa / (kappa + 1.0),
+                0.5 / (kappa + 1.0),
+                0.5 / (kappa + 1.0),
+            ]
+        self._weights = sigma_weights
+
+    def forward(
+        self,
+        module: BayesianModule,
+        input: types.MuVar,
+    ) -> types.MuVar:
+        # If input and layer are both deterministic, we can just return the module call
+        # without doing the unscented transform.
+        if not (module._learn_var or input.var):
+            return type(input)(module._module(input.mu), None)
+
+        # Prepare input distribution sigma points.
+        if input.var is None:
+            sigma_point_and_weight = [(input.mu, 1.0)]
+        else:
+            offset = self._scale * input.var.sqrt()
+            sigma_point_and_weight = [
+                (input.mu, self._weights[0]),
+                (input.mu - offset, self._weights[1]),
+                (input.mu + offset, self._weights[2]),
+            ]
+        sigma_points_all = [sigma_point_and_weight]
+        sigma_point_names = ["input"]
+
+        # Prepare parameter distribution sigma points.
+        for name in module._module._parameters:
+            mu = module._module_params[f"{name}_mean"]
+            rho = module._module_params[f"{name}_rho"]
+            if rho is None:
+                sigma_point_and_weight = [(mu, 1.0)]
+            else:
+                offset = self._scale * module.scale_tform(rho)
+                sigma_point_and_weight = [
+                    (mu, self._weights[0]),
+                    (mu - offset, self._weights[1]),
+                    (mu + offset, self._weights[2]),
+                ]
+
+            sigma_points_all.append(sigma_point_and_weight)
+            sigma_point_names.append(name)
+
+        # Loop over sigma points and evaluate.
+        outputs = []
+        output_weights = []
+        for sigma_points in itertools.product(*sigma_points_all):
+            # For each set of sigma points, separate input sigma points from
+            # parameter distribution sigma points and pass through the module.
+            sigma_point_input = sigma_points[0][0]
+            total_weight = sigma_points[0][1]
+            parameters = {}
+            for name, sigma_point_param in zip(
+                sigma_point_names[1:],
+                sigma_points[1:],
+            ):
+                parameter_point, parameter_weight = sigma_point_param
+                parameters[name] = parameter_point
+                total_weight *= parameter_weight
+
+            output = torch.func.functional_call(
+                module._module,
+                parameters,
+                (sigma_point_input,),
+            )
+            outputs.append(output)
+            output_weights.append(total_weight)
+
+        # Estimate mean and variance.
+        outputs = torch.stack(outputs)
+        weights = outputs.new_tensor(output_weights)
+        for _ in range(outputs.ndim - 1):
+            weights = weights.unsqueeze(-1)
+        output_mu = (weights * outputs).sum(dim=0)
+        output_var = (weights * (outputs - output_mu) ** 2).sum(dim=0)
+
+        return types.MuVar(output_mu, output_var)
 
 
 class MonteCarlo(MomentPropagator):
