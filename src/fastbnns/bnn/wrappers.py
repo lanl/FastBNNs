@@ -57,7 +57,8 @@ def select_default_propagator(
         # default to the unscented transform.
         moment_propagator = inference.UnscentedTransform()
     else:
-        # With learnable Bayesian parameters, we'll default to a
+        # With learnable Bayesian parameters, we'll default to an unscented transform
+        # that jointly accounts for input distributions and parameter distributions.
         moment_propagator = inference.JointUnscentedTransform()
 
     return moment_propagator
