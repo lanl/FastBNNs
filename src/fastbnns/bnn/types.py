@@ -179,85 +179,99 @@ class MuVar:
 
     @staticmethod
     def _functional_fallback(func: Callable, *args, **kwargs) -> Any:
-        """Basic unscented transform fallback for torch functions."""
+        """Basic unscented transform fallback for torch functions.
+
+        NOTE: This implements a simple unscented transform that does not compute
+        an outer product of sigma points. In other words, this fallback will only
+        evaluate three sigma points total, regardless of the number of MuVar inputs
+        present in args and kwargs.
+        """
         # Define sigma point parameters.
         kappa = 2.0
         scale = math.sqrt(kappa + 1.0)
-        weights = torch.tensor(
-            [kappa / (kappa + 1.0), 0.5 / (kappa + 1.0), 0.5 / (kappa + 1.0)]
+        weights = (
+            kappa / (kappa + 1.0),
+            0.5 / (kappa + 1.0),
+            0.5 / (kappa + 1.0),
         )
-        n_sigma = 3
-        batch_size = None
 
-        def make_sigma_points(value: Any) -> Any:
-            """Replace MuVar inputs with corresponding sigma points for `func`."""
-
-            # Specify batch_size as nonlocal so we can set it once and use outside of
-            # make_sigma_points().
-            nonlocal batch_size
-
-            # Generate sigma points or recurse through packed values.
+        # Define several recursive helper functions to manage processing of
+        # args and kwargs for unscented transform.
+        def has_variance(value: Any) -> bool:
+            """Determine whether any of `value` or its elements define a distribution."""
             if isinstance(value, MuVar):
-                batch_size = value.mu.shape[0] if batch_size is None else batch_size
-
-                if value.var is None:
-                    sigma_points = torch.stack((value.mu, value.mu, value.mu))
-                else:
-                    scaled_stdev = scale * value.var.sqrt()
-                    sigma_points = torch.stack(
-                        (
-                            value.mu,
-                            value.mu - scaled_stdev,
-                            value.mu + scaled_stdev,
-                        )
-                    )
-
-                # Merge sigma points along batch dimension for batched processing.
-                return sigma_points.reshape(
-                    n_sigma * batch_size,
-                    *sigma_points.shape[2:],
-                )
-            elif isinstance(value, torch.Tensor):
-                # Replicate tensor to match shape of the MuVar sigma points.
-                return (
-                    value.unsqueeze(0)
-                    .expand(n_sigma, *value.shape)
-                    .reshape(n_sigma * batch_size, *value.shape[1:])
-                )
-            elif isinstance(value, tuple):
-                return tuple(make_sigma_points(v) for v in value)
-            elif isinstance(value, list):
-                return [make_sigma_points(v) for v in value]
+                return value.var is not None
+            elif isinstance(value, (list, tuple)):
+                return any(has_variance(v) for v in value)
             elif isinstance(value, dict):
-                return {k: make_sigma_points(v) for k, v in value.items()}
+                return any(has_variance(v) for v in value.values())
+            else:
+                return False
+
+        def select_sigma_point(value: Any, index: int) -> Any:
+            """Replace each MuVar in `value` with the requested sigma point."""
+            if isinstance(value, MuVar):
+                if (value.var is None) or (index == 0):
+                    return value.mu
+                offset = scale * value.var.sqrt()
+                return value.mu - offset if (index == 1) else value.mu + offset
+            elif isinstance(value, tuple):
+                return tuple(select_sigma_point(v, index) for v in value)
+            elif isinstance(value, list):
+                return [select_sigma_point(v, index) for v in value]
+            elif isinstance(value, dict):
+                return {k: select_sigma_point(v, index) for k, v in value.items()}
             else:
                 return value
 
-        # Replace every MuVar input with its sigma points.
-        sigma_args = make_sigma_points(args)
-        sigma_kwargs = make_sigma_points(kwargs)
+        def wrap_deterministic(value: Any) -> Any:
+            """Convert all tensor items in `value` to a MuVar type."""
+            if isinstance(value, torch.Tensor):
+                return MuVar(value, None)
+            elif isinstance(value, (tuple, list)):
+                return type(value)(wrap_deterministic(v) for v in value)
+            else:
+                return value
 
-        # Evaluate all sigma points simultaneously.
-        samples = func(*sigma_args, **sigma_kwargs)
-        if batch_size is None:
-            return MuVar(samples, None)
+        def combine_samples(samples: list[Any]) -> Any:
+            """Compute mean and variance from sigma point evaluations `samples`."""
+            sigma_0 = samples[0]
+            if isinstance(sigma_0, torch.Tensor):
+                stacked = torch.stack(samples)
 
-        # Restore the sigma-point dimension.
-        samples = samples.reshape(
-            n_sigma,
-            batch_size,
-            *samples.shape[1:],
-        )
+                sample_weights = stacked.new_tensor(weights)
+                for _ in range(stacked.ndim - 1):
+                    sample_weights = sample_weights.unsqueeze(-1)
 
-        # Broadcast UT weights across the output.
-        weights = weights.to(samples).reshape(
-            n_sigma,
-            *((1,) * (samples.ndim - 1)),
-        )
-        mu = (weights * samples).sum(dim=0)
-        var = (weights * (samples - mu) ** 2).sum(dim=0)
+                mu = (sample_weights * stacked).sum(dim=0)
+                var = (sample_weights * (stacked - mu) ** 2).sum(dim=0)
 
-        return MuVar(mu, var)
+                return MuVar(mu, var)
+            elif isinstance(sigma_0, (tuple, list)):
+                return type(sigma_0)(
+                    combine_samples([sample[n] for sample in samples])
+                    for n in range(len(sigma_0))
+                )
+            else:
+                return sigma_0
+
+        # If all of args and kwargs are deterministic, we can skip computing
+        # the unscented transform and just process the means.
+        if not (has_variance(args) or has_variance(kwargs)):
+            output = func(
+                *select_sigma_point(args, 0),
+                **select_sigma_point(kwargs, 0),
+            )
+            return wrap_deterministic(output)
+
+        # Compute the unscented transform.
+        samples = []
+        n_sigma_points = 3  # hard-coded for clarity
+        for index in range(n_sigma_points):
+            sigma_args = select_sigma_point(args, index)
+            sigma_kwargs = select_sigma_point(kwargs, index)
+            samples.append(func(*sigma_args, **sigma_kwargs))
+        return combine_samples(samples)
 
     @classmethod
     def __torch_function__(
