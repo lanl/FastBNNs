@@ -53,7 +53,24 @@ SIMPLE_TORCH_FUNCS = {
 }
 
 # Define additional tensor-specific methods that can only be called as x.method(), not torch.method(x).
-TENSOR_METHODS = {"cpu", "cuda", "to", "requires_grad_", "view", "reshape"}
+TENSOR_METHODS = {
+    "cpu",
+    "cuda",
+    "to",
+    "requires_grad_",
+    "view",
+    "reshape",
+    "contiguous",
+    "repeat",
+    "expand",
+    "expand_as",
+    "unfold",
+    "type_as",
+    "float",
+    "double",
+    "half",
+    "bfloat16",
+}
 
 # Define custom handlers registry for other operations requiring special treatment.
 MUVAR_HANDLERS: dict[Callable[..., Any], Callable[..., Any]] = {}
