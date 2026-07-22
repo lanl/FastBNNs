@@ -196,12 +196,17 @@ class JointUnscentedTransform(MomentPropagator):
         self,
         sigma_scale: Optional[float | torch.Tensor] = None,
         sigma_weights: Optional[list[float] | tuple[float, ...] | torch.Tensor] = None,
+        outer_product: bool = False,
     ):
         """Initializer for JointUnscentedTransform inference module.
 
         Args:
             sigma_scale: Scale factor for sigma points mu -+ sigma_scale*var.sqrt().
             sigma_weights: Weighting factors corresponding to sigma points.
+            outer_product: Flag indicating we should propagate the outer product
+                of sigma points across input and all Bayesian parameters. When False,
+                we do an unscented transform with only three sigma points total,
+                where input and parameters are varied jointly.
         """
         super().__init__()
 
@@ -218,6 +223,8 @@ class JointUnscentedTransform(MomentPropagator):
                 0.5 / (kappa + 1.0),
             ]
         self._weights = sigma_weights
+
+        self.outer_product = outer_product
 
     def forward(
         self,
@@ -259,30 +266,66 @@ class JointUnscentedTransform(MomentPropagator):
             sigma_points_all.append(sigma_point_and_weight)
             sigma_point_names.append(name)
 
-        # Loop over sigma points and evaluate.
         outputs = []
         output_weights = []
-        for sigma_points in itertools.product(*sigma_points_all):
-            # For each set of sigma points, separate input sigma points from
-            # parameter distribution sigma points and pass through the module.
-            sigma_point_input = sigma_points[0][0]
-            total_weight = sigma_points[0][1]
-            parameters = {}
-            for name, sigma_point_param in zip(
-                sigma_point_names[1:],
-                sigma_points[1:],
-            ):
-                parameter_point, parameter_weight = sigma_point_param
-                parameters[name] = parameter_point
-                total_weight *= parameter_weight
+        if self.outer_product:
+            # Evaluate all combinations of sigma points.
+            for sigma_points in itertools.product(*sigma_points_all):
+                # For each set of sigma points, separate input sigma points from
+                # parameter distribution sigma points and pass through the module.
+                sigma_point_input = sigma_points[0][0]
+                total_weight = sigma_points[0][1]
+                parameters = {}
+                for name, sigma_point_param in zip(
+                    sigma_point_names[1:],
+                    sigma_points[1:],
+                ):
+                    parameter_point, parameter_weight = sigma_point_param
+                    parameters[name] = parameter_point
+                    total_weight *= parameter_weight
 
-            output = torch.func.functional_call(
-                module._module,
-                parameters,
-                (sigma_point_input,),
-            )
-            outputs.append(output)
-            output_weights.append(total_weight)
+                output = torch.func.functional_call(
+                    module._module,
+                    parameters,
+                    (sigma_point_input,),
+                )
+                outputs.append(output)
+                output_weights.append(total_weight)
+        else:
+            # Evaluate only three sigma points: input and parameter means, input
+            # and parameter lower sigma point, and input and parameter upper sigma point.
+            n_sigma_points = 3
+            for index in range(n_sigma_points):
+                # Grab input sigma point, taking just the mean if input is deterministic.
+                input_points = sigma_points_all[0]
+                sigma_point_input = (
+                    input_points[0][0]
+                    if (len(input_points) == 1)
+                    else input_points[index][0]
+                )
+
+                # Grab parameter sigma points, again only taking the mean if the
+                # parameter is deterministic.
+                parameters = {}
+                for name, parameter_points in zip(
+                    sigma_point_names[1:],
+                    sigma_points_all[1:],
+                ):
+                    parameter_point = (
+                        parameter_points[0][0]
+                        if len(parameter_points) == 1
+                        else parameter_points[index][0]
+                    )
+                    parameters[name] = parameter_point
+
+                # Apply module to current set of sigma points.
+                output = torch.func.functional_call(
+                    module._module,
+                    parameters,
+                    (sigma_point_input,),
+                )
+                outputs.append(output)
+                output_weights.append(self._weights[index])
 
         # Estimate mean and variance.
         outputs = torch.stack(outputs)
