@@ -20,7 +20,7 @@ from .types import MuVar
 
 # Define layers that can be applied to input mean and variance without additional
 # processing (e.g., a flatten layer, which only changes the shape of the input).
-BROADCAST = [
+BROADCAST = {
     "ChannelShuffle",
     "Identity",
     "Flatten",
@@ -30,7 +30,7 @@ BROADCAST = [
     *[f"ZeroPad{n + 1}d" for n in range(3)],
     *[f"ConstantPad{n + 1}d" for n in range(3)],
     *[f"CircularPad{n + 1}d" for n in range(3)],
-]
+}
 
 
 CURRENT_MODULE = sys.modules[__name__]

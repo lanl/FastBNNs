@@ -14,6 +14,7 @@ dependencies = ["torch>=2.6.0"]
 [project.optional-dependencies]
 examples = ["lightning", "matplotlib", "scipy"]
 laplace = ["laplace-torch"]
+dev = ["pytest", "sphinx", "myst-parser", "furo"]
 
 [project.urls]
 Homepage = "https://github.com/lanl/FastBNNs"

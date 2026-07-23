@@ -24,7 +24,7 @@ jobs:
         python-version: "3.13"
 
     - run: pip install -e .
-    - run: pip install sphinx furo
+    - run: pip install sphinx furo myst-parser
 
     - run: sphinx-apidoc -o docs/source src/fastbnns
 
