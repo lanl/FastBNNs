@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import functools
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
 import math
 import torch
@@ -40,6 +40,9 @@ SIMPLE_TORCH_FUNCS = {
     torch.sum,  # assumes independence: E[a+b]=E[a]+E[b], V[a+b]=V[a]+V[b]
     torch.detach,
     torch.clone,
+    torch.zeros_like,
+    torch.ones_like,
+    torch.randn_like,
     torch.nn.functional.pad,
     torch.nn.functional.interpolate,
     torch.nn.functional.upsample,
@@ -50,7 +53,24 @@ SIMPLE_TORCH_FUNCS = {
 }
 
 # Define additional tensor-specific methods that can only be called as x.method(), not torch.method(x).
-TENSOR_METHODS = {"cpu", "cuda", "to", "requires_grad_", "view"}
+TENSOR_METHODS = {
+    "cpu",
+    "cuda",
+    "to",
+    "requires_grad_",
+    "view",
+    "reshape",
+    "contiguous",
+    "repeat",
+    "expand",
+    "expand_as",
+    "unfold",
+    "type_as",
+    "float",
+    "double",
+    "half",
+    "bfloat16",
+}
 
 # Define custom handlers registry for other operations requiring special treatment.
 MUVAR_HANDLERS: dict[Callable[..., Any], Callable[..., Any]] = {}
@@ -81,7 +101,7 @@ def implements(*functions: Callable[..., Any]):
 )
 def muvar_avg_pool(
     func,
-    input: torch.tensor,
+    input: torch.Tensor,
     kernel_size: torch.types._int | torch.types._size,
     stride: torch.types._int | torch.types._size | None = None,
     padding: torch.types._int | torch.types._size = 0,
@@ -125,6 +145,17 @@ def muvar_avg_pool(
     return MuVar(mu, var)
 
 
+@implements(torch.nn.functional.dropout)
+def muvar_dropout(
+    func,
+    input: torch.Tensor,
+    *args,
+    **kwargs,
+):
+    # Only apply dropout to the parameter means.
+    return MuVar(func(input.mu, *args, **kwargs), input.var)
+
+
 class MuVar:
     """Custom object holding mean and variance of some distribution.
 
@@ -132,12 +163,10 @@ class MuVar:
 
     def __init__(
         self,
-        mu: Union[
-            torch.Tensor,
-            list[torch.Tensor, torch.Tensor],
-            tuple[torch.Tensor, torch.Tensor],
-            MuVar,
-        ],
+        mu: torch.Tensor
+        | list[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, torch.Tensor]
+        | MuVar,
         var: Optional[torch.Tensor] = None,
     ) -> None:
         """Initialize MuVar instance.
@@ -166,37 +195,100 @@ class MuVar:
             self.var = var
 
     @staticmethod
-    def _functional_fallback(func: Callable, input: MuVar, *args, **kwargs):
-        """Basic unscented transform fallback for unknown torch functions."""
-        if input.var is None:
-            # Only mean needs to be propagated.
-            mu = func(input.mu)
-            var = None
-        else:
-            # Select sigma points and reshape along batch dimension for batched eval.
-            kappa = 2.0
-            scale = torch.sqrt(torch.tensor(kappa + 1.0))
-            weights = torch.tensor(
-                [kappa / (kappa + 1.0), 0.5 / (kappa + 1.0), 0.5 / (kappa + 1.0)]
-            )
-            scaled_stdev = scale * input.var.sqrt()
-            sigma_points = torch.stack(
-                (input.mu, input.mu - scaled_stdev, input.mu + scaled_stdev)
-            )
-            sp_shape = sigma_points.shape
-            sigma_points = sigma_points.reshape(
-                sp_shape[0] * sp_shape[1], *sp_shape[2:]
-            )
-            weights = weights
+    def _functional_fallback(func: Callable, *args, **kwargs) -> Any:
+        """Basic unscented transform fallback for torch functions.
 
-            # Propagate mean and variance.
-            samples = func(sigma_points)
-            samples = samples.reshape(sp_shape[0], sp_shape[1], *samples.shape[1:])
-            weights = weights.reshape((weights.shape[0],) + (1,) * (samples.ndim - 1))
-            mu = (weights * samples).sum(dim=0)
-            var = (weights * ((samples - mu) ** 2)).sum(dim=0)
+        NOTE: This implements a simple unscented transform that does not compute
+        an outer product of sigma points. In other words, this fallback will only
+        evaluate three sigma points total, regardless of the number of MuVar inputs
+        present in args and kwargs.
+        """
+        # Define sigma point parameters.
+        kappa = 2.0
+        scale = math.sqrt(kappa + 1.0)
+        weights = (
+            kappa / (kappa + 1.0),
+            0.5 / (kappa + 1.0),
+            0.5 / (kappa + 1.0),
+        )
 
-            return MuVar([mu, var])
+        # Define several recursive helper functions to manage processing of
+        # args and kwargs for unscented transform.
+        def has_variance(value: Any) -> bool:
+            """Determine whether any of `value` or its elements define a distribution."""
+            if isinstance(value, MuVar):
+                return value.var is not None
+            elif isinstance(value, (list, tuple)):
+                return any(has_variance(v) for v in value)
+            elif isinstance(value, dict):
+                return any(has_variance(v) for v in value.values())
+            else:
+                return False
+
+        def select_sigma_point(value: Any, index: int) -> Any:
+            """Replace each MuVar in `value` with the requested sigma point."""
+            if isinstance(value, MuVar):
+                if (value.var is None) or (index == 0):
+                    return value.mu
+                offset = scale * value.var.sqrt()
+                return value.mu - offset if (index == 1) else value.mu + offset
+            elif isinstance(value, tuple):
+                return tuple(select_sigma_point(v, index) for v in value)
+            elif isinstance(value, list):
+                return [select_sigma_point(v, index) for v in value]
+            elif isinstance(value, dict):
+                return {k: select_sigma_point(v, index) for k, v in value.items()}
+            else:
+                return value
+
+        def wrap_deterministic(value: Any) -> Any:
+            """Convert all tensor items in `value` to a MuVar type."""
+            if isinstance(value, torch.Tensor):
+                return MuVar(value, None)
+            elif isinstance(value, (tuple, list)):
+                return type(value)(wrap_deterministic(v) for v in value)
+            else:
+                return value
+
+        def combine_samples(samples: list[Any]) -> Any:
+            """Compute mean and variance from sigma point evaluations `samples`."""
+            sigma_0 = samples[0]
+            if isinstance(sigma_0, torch.Tensor):
+                stacked = torch.stack(samples)
+
+                sample_weights = stacked.new_tensor(weights)
+                for _ in range(stacked.ndim - 1):
+                    sample_weights = sample_weights.unsqueeze(-1)
+
+                mu = (sample_weights * stacked).sum(dim=0)
+                var = (sample_weights * (stacked - mu) ** 2).sum(dim=0)
+
+                return MuVar(mu, var)
+            elif isinstance(sigma_0, (tuple, list)):
+                return type(sigma_0)(
+                    combine_samples([sample[n] for sample in samples])
+                    for n in range(len(sigma_0))
+                )
+            else:
+                return sigma_0
+
+        # If all of args and kwargs are deterministic, we can skip computing
+        # the unscented transform and just process the means.
+        if not (has_variance(args) or has_variance(kwargs)):
+            output = func(
+                *select_sigma_point(args, 0),
+                **select_sigma_point(kwargs, 0),
+            )
+            return wrap_deterministic(output)
+
+        # Compute the unscented transform.
+        samples = []
+        n_sigma_points = 3  # hard-coded for clarity
+        for index in range(n_sigma_points):
+            sigma_args = select_sigma_point(args, index)
+            sigma_kwargs = select_sigma_point(kwargs, index)
+            samples.append(func(*sigma_args, **sigma_kwargs))
+        return combine_samples(samples)
 
     @classmethod
     def __torch_function__(
@@ -213,14 +305,21 @@ class MuVar:
         if not any(issubclass(t, MuVar) for t in types):
             return NotImplemented
 
+        # For Tensor methods, we will try to redefine them in terms of their torch.*
+        # implementation before proceeding.
+        if getattr(func, "__objclass__", None) is torch.Tensor:
+            torch_func = getattr(torch, func.__name__, None)
+            if callable(torch_func):
+                func = torch_func
+
         # For "simple" functions like torch.cat, we'll route mu and var separately
         # through the function.  Otherwise, we don't want to use these
         # __torch_function__ implementations.
         if func in SIMPLE_TORCH_FUNCS:
 
-            def split_muvar(args: Union[list, tuple]) -> Union[list, tuple]:
+            def split_muvar_args(args: list | tuple) -> list | tuple:
                 """Recursively split MuVar instances into separate lists of mu and lists of var."""
-                if isinstance(args, Union[list, tuple]):
+                if isinstance(args, list | tuple):
                     # Loop through arguments and split.
                     args_mu = []
                     args_var = []
@@ -234,7 +333,7 @@ class MuVar:
                             )
                         elif isinstance(arg, (list, tuple)):
                             # Split MuVar items if needed.
-                            splits = split_muvar(arg)
+                            splits = split_muvar_args(arg)
                             args_mu.append(splits[0])
                             args_var.append(splits[1])
                         else:
@@ -247,27 +346,34 @@ class MuVar:
                     return args, args
 
             # Separate MuVar types into mu and var for split calls to `func`.
-            args_mu, args_var = split_muvar(args)
+            args_mu, args_var = split_muvar_args(args)
             kwargs_mu = {}
             kwargs_var = {}
             for k, v in kwargs.items():
-                kwargs_mu[k], kwargs_var[k] = split_muvar(v)
-            return MuVar(func(*args_mu, **kwargs_mu), func(*args_var, **kwargs_var))
+                kwargs_mu[k], kwargs_var[k] = split_muvar_args(v)
+
+            # Call the functional on mu and var independently.
+            mu_out = func(*args_mu, **kwargs_mu)
+            var_out = func(*args_var, **kwargs_var)
+
+            # Repackage functional output as needed (e.g., torch.cat returns a
+            # tensor, torch.unbind returns a tuple, ...).
+            if isinstance(mu_out, tuple):
+                return tuple(MuVar(m, v) for m, v in zip(mu_out, var_out))
+            else:
+                return MuVar(mu_out, var_out)
         elif func in MUVAR_HANDLERS:
             # A custom handler was registered in MUVAR_HANDLERS.
             return MUVAR_HANDLERS[func](func, *args, **kwargs)
         elif hasattr(cls, func.__name__):
             # A custom implementation of this torch function was defined for this type.
             return getattr(cls, func.__name__)(*args, **kwargs)
-        elif func.__module__ == "torch.nn.functional":
-            # For remaining torch functionals, we'll attempt to use a basic unscented transform.
+        else:
+            # For remaining torch functions, we'll attempt to use a basic unscented transform.
             try:
                 return cls._functional_fallback(func, *args, **kwargs)
             except Exception:
                 return NotImplemented
-        else:
-            # Return NotImplemented to allow other overrides to be used.
-            return NotImplemented
 
     def __repr__(self):
         """Custom display functionality."""
@@ -275,6 +381,13 @@ class MuVar:
 
     def __getattr__(self, name: str) -> Any:
         """Custom getattr fallback handler."""
+        # Determine if a non-callable attribute with `name` exists in self.mu, returning that
+        # when appropriate.
+        mu = object.__getattribute__(self, "mu")
+        mu_attr = getattr(mu, name, None)
+        if (mu_attr is not None) and (not callable(mu_attr)):
+            return mu_attr
+
         # If a torch function exists with name `name` (e.g., x.sum()), return that.
         # Otherwise we'll return the requested attribute for self.mu.
         torch_fxn = getattr(torch, name, None)
@@ -292,9 +405,12 @@ class MuVar:
 
     def __getitem__(self, idx: int) -> MuVar:
         """Access requested index of self.mu and self.var"""
-        return MuVar(self.mu[idx], self.var[idx])
+        return MuVar(
+            self.mu[idx],
+            None if self.var is None else self.var[idx],
+        )
 
-    def __add__(self, input: Union[float, torch.Tensor, list, MuVar]) -> MuVar:
+    def __add__(self, input: float | torch.Tensor | MuVar) -> MuVar:
         """Custom add functionality for MuVar types."""
         if isinstance(input, (float, torch.Tensor)):
             # Adding a float or tensor is like adding a delta R.V., so
@@ -315,13 +431,40 @@ class MuVar:
         else:
             raise NotImplementedError
 
-    def __radd__(self, input: Union[float, torch.Tensor, list]) -> MuVar:
+    def add(self, input: float | torch.Tensor | MuVar) -> MuVar:
+        return self.__add__(input)
+
+    def add_(
+        self,
+        input: int | float | torch.Tensor | MuVar,
+        *,
+        alpha: int = 1,
+    ) -> MuVar:
+        """Custom inplace add for MuVar types assuming self and input are independent."""
+        if isinstance(input, MuVar):
+            # Assume self and input are independent random variables so means and
+            # (alpha-scaled) variances add.
+            self.mu.add_(input.mu, alpha=alpha)
+            if input.var is not None:
+                if self.var is None:
+                    self.var = input.var * (alpha**2)
+                else:
+                    self.var.add_(input.var, alpha=alpha**2)
+        else:
+            self.mu.add_(input, alpha=alpha)
+
+        return self
+
+    def __iadd__(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
+        return self.add_(input)
+
+    def __radd__(self, input: int | float | torch.Tensor) -> MuVar:
         """Custom add functionality for MuVar types."""
         return self.__add__(input)
 
-    def __sub__(self, input: Union[float, torch.Tensor, list, MuVar]) -> MuVar:
+    def __sub__(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
         """Custom subtract functionality for MuVar types."""
-        if isinstance(input, (float, torch.Tensor)):
+        if isinstance(input, (int, float, torch.Tensor)):
             # Adding a float or tensor is like adding a delta R.V., so
             # variance does not change.
             return MuVar(self.mu - input, self.var)
@@ -340,13 +483,40 @@ class MuVar:
         else:
             raise NotImplementedError
 
-    def __rsub__(self, input: Union[float, torch.Tensor, list]) -> MuVar:
+    def sub(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
+        return self.__sub__(input)
+
+    def __rsub__(self, input: int | float | torch.Tensor) -> MuVar:
         """Custom subtract functionality for MuVar types."""
         return self.__sub__(input)
 
-    def __mul__(self, input: Union[float, torch.Tensor, list, MuVar]) -> MuVar:
+    def sub_(
+        self,
+        input: int | float | torch.Tensor | MuVar,
+        *,
+        alpha: int = 1,
+    ) -> MuVar:
+        """Custom inplace sub for MuVar types assuming self and input are independent."""
+        if isinstance(input, MuVar):
+            # Assume self and input are independent random variables so means subtract
+            # and (alpha-scaled) variances add.
+            self.mu.sub_(input.mu, alpha=alpha)
+            if input.var is not None:
+                if self.var is None:
+                    self.var = input.var * (alpha**2)
+                else:
+                    self.var.add_(input.var, alpha=alpha**2)
+        else:
+            self.mu.sub_(input, alpha=alpha)
+
+        return self
+
+    def __isub__(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
+        return self.sub_(input)
+
+    def __mul__(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
         """Custom multiply functionality for MuVar types."""
-        if isinstance(input, (float, torch.Tensor)):
+        if isinstance(input, (int, float, torch.Tensor)):
             # Multiplication by scalar: E[aX] = aE[x], V[aX]=a**2 V[X]
             if self.var is None:
                 return MuVar(input * self.mu, None)
@@ -371,11 +541,14 @@ class MuVar:
         else:
             raise NotImplementedError
 
-    def __rmul__(self, input: Union[float, torch.Tensor, list]) -> MuVar:
+    def mul(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
+        return self.__mul__(input)
+
+    def __rmul__(self, input: int | float | torch.Tensor) -> MuVar:
         """Custom multiply functionality for MuVar types."""
         return self.__mul__(input)
 
-    def __matmul__(self, input: Union[torch.Tensor, list, MuVar]) -> MuVar:
+    def __matmul__(self, input: torch.Tensor | MuVar) -> MuVar:
         """Custom matrix multiply functionality for MuVar types."""
         # NOTE: MuVar is NOT holding multivariate distributions.  Each scalar entry
         # represents (mu, var) of an independent distribution, so matrix multiplication
@@ -405,16 +578,16 @@ class MuVar:
         else:
             raise NotImplementedError
 
-    def __rmatmul__(self, input: Union[torch.Tensor, list]) -> MuVar:
+    def __rmatmul__(self, input: torch.Tensor | MuVar) -> MuVar:
         """Custom matrix multiply functionality for MuVar types."""
         return self.__matmul__(input)
 
-    def __pow__(self, input: int) -> MuVar:
+    def __pow__(self, input: int | float | torch.Tensor) -> MuVar:
         """Custom exponentiation functionality for MuVar types.
 
         WARNING: This implementation assumes independent Normally distributed random variables!
         """
-        if isinstance(input, int):
+        if isinstance(input, int | float | torch.Tensor):
             # Exponentiation of a Normal random variable: see
             # https://en.wikipedia.org/wiki/Normal_distribution#Moments
             def normal_moment(
@@ -440,6 +613,9 @@ class MuVar:
             return MuVar(mu, var)
         else:
             raise NotImplementedError
+
+    def pow(self, input: int | float | torch.Tensor) -> MuVar:
+        return self.__pow__(input)
 
     def apply(self, func: Callable, *args, **kwargs) -> MuVar:
         """Generic apply() for functions that act separately on mu and var."""
@@ -499,6 +675,11 @@ class MuVar:
         else:
             return MuVar(x_mean.squeeze(), None if x_var is None else x_var.squeeze())
 
+    def addcmul(self, tensor1, tensor2, *, value=1) -> torch.MuVar:
+        """Custom implementation of torch.addcmul."""
+        # At least one input is a MuVar, so make all MuVar before proceeding.
+        return MuVar(self) + MuVar(value) * MuVar(tensor1) * MuVar(tensor2)
+
 
 if __name__ == "__main__":
     # Scalar operations.
@@ -526,3 +707,4 @@ if __name__ == "__main__":
     print(torch.nn.functional.pad(a, [0, 1, 2, 0]))
     print(torch.nn.functional.avg_pool1d(a, kernel_size=2))
     print(torch.nn.functional.leaky_relu(a))
+    print(torch.nn.functional.dropout(a, p=0.5))

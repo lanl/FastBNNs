@@ -20,7 +20,7 @@ from .types import MuVar
 
 # Define layers that can be applied to input mean and variance without additional
 # processing (e.g., a flatten layer, which only changes the shape of the input).
-BROADCAST = [
+BROADCAST = {
     "ChannelShuffle",
     "Identity",
     "Flatten",
@@ -30,7 +30,7 @@ BROADCAST = [
     *[f"ZeroPad{n + 1}d" for n in range(3)],
     *[f"ConstantPad{n + 1}d" for n in range(3)],
     *[f"CircularPad{n + 1}d" for n in range(3)],
-]
+}
 
 
 CURRENT_MODULE = sys.modules[__name__]
@@ -57,9 +57,10 @@ def select_default_propagator(
         # default to the unscented transform.
         moment_propagator = inference.UnscentedTransform()
     else:
-        # With learnable Bayesian parameters, we'll default to
-        # Monte Carlo sampling.
-        moment_propagator = inference.MonteCarlo()
+        # With learnable Bayesian parameters, we'll default to an unscented transform
+        # that accounts for input distributions and parameter distributions
+        # using the jointly varying sigma points across input and parameter distributions.
+        moment_propagator = inference.JointUnscentedTransform(outer_product=False)
 
     return moment_propagator
 

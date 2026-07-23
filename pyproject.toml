@@ -26,6 +26,12 @@ comparisons = [
   "laplace-torch; python_version < '3.13'",
   "bayesian-torch
 ]
+dev = [
+  "pytest", 
+  "sphinx", 
+  "myst-parser", 
+  "furo"
+]
 
 [project.urls]
 Homepage = "https://github.com/lanl/FastBNNs"

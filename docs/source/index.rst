@@ -16,3 +16,5 @@ documentation for details.
    :caption: Contents:
 
    modules
+   developer_guide
+   contributing
