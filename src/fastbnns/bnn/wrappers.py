@@ -57,9 +57,10 @@ def select_default_propagator(
         # default to the unscented transform.
         moment_propagator = inference.UnscentedTransform()
     else:
-        # With learnable Bayesian parameters, we'll default to
-        # Monte Carlo sampling.
-        moment_propagator = inference.MonteCarlo()
+        # With learnable Bayesian parameters, we'll default to an unscented transform
+        # that accounts for input distributions and parameter distributions
+        # using the jointly varying sigma points across input and parameter distributions.
+        moment_propagator = inference.JointUnscentedTransform(outer_product=False)
 
     return moment_propagator
 
