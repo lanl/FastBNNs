@@ -10,6 +10,9 @@ At inference, FastBNNs leverages a combination of the selected inference classes
 In the following sections, we provide additional details about this process that developers may find useful.
 In particular, we expand on the mechanics of the automated NN-to-BNN conversion process, leaf module wrappers, and inference classes/the `MuVar` type, as well as provide useful tips for developers that need to expand or modify the behavior of key components of FastBNNs.
 
+Throughout development, we encourage developers to regularly run the tests provided in `FastBNNs/tests` using pytest and to extend or update these tests when appropriate.
+
+
 ## Automated NN-to-BNN conversion
 A PyTorch-based NN `nn` can be converted to a BNN using 
 
