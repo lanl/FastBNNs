@@ -79,7 +79,7 @@ class BNN(torch.nn.Module):
             convert_in_place: Flag indicating input `nn` should be converted to
                 a BNN in place.
             args, kwargs: Passed as
-                bnn.utils.convert_to_bnn_(model=nn, *args, **kwargs)
+                bnn.wrappers.convert_to_bnn_(model=nn, *args, **kwargs)
         """
         super().__init__()
 
