@@ -644,7 +644,7 @@ ax[2].set_xlim((x.min(), x.max()))
 ax[2].set_ylim(ylim)
 ax[2].plot([-0.5, -0.5], ylim, "--", color="b")
 ax[2].plot([0.5, 0.5], ylim, "--", color="b")
-fig.savefig("comparison.png", bbox_inches="tight", dpi=300)
+fig.savefig("polynomial.png", bbox_inches="tight", dpi=300)
 plt.close(fig)
 
 # Test set MSEs:
