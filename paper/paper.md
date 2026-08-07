@@ -45,10 +45,10 @@ We compare FastBNNs to two open-source software packages for BNN inference: Lapl
 Visualizations of both I.D. and O.O.D. test-set predictions for each of the trained models are shown in \autoref{fig:comparison}, as well as approximate inference times as measured on an NVIDIA RTX 2000 Ada Generation Laptop GPU.
 The script used to train and evaluate these models is included in the FastBNNs repository at [polynomial.py](https://github.com/lanl/FastBNNs/blob/main/comparisons/polynomial.py).
 
-Notably, FastBNNs is faster than sampling-based inference as used in Bayesian-Torch, and for this example and hardware combination, is even faster than the generalized linear model inference used in laplace-torcch.
+Notably, FastBNNs is faster than sampling-based inference as used in Bayesian-Torch, and for this example and hardware combination, is even faster than the generalized linear model inference used in Laplace.
 Furthermore, although FastBNNs and Bayesian-Torch (and not Laplace) can model heteroscedastic aleatoric uncertainty, Bayesian-Torch is not able to model the parameter distribution of the custom nonlinearity, which may explain the inaccurate uncertainty predictions for the I.D. test set evaluations seen in \autoref{fig:comparison}.
 
-![Comparison between FastBNNs, Bayesian-Torch, and laplace-torch. Test-set evaluations are made for I.D. and O.O.D. data for models trained using FastBNNs, Bayesian-Torch (with 30 Monte Carlo samples), and laplace-torch (using the diagonal Laplace approximation). Inference times are shown for an NVIDIA RTX 2000 Ada Generation Laptop GPU.\label{fig:comparison}](../comparisons/polynomial.png)
+![Comparison between FastBNNs, Bayesian-Torch, and laplace-torch. Test-set evaluations are made for I.D. and O.O.D. data for models trained using FastBNNs, Bayesian-Torch (with 30 Monte Carlo samples), and laplace-torch (using the diagonal Laplace approximation). ``true uncertainty'' is defined as the square root of the sum of observed mean squared error and the simulated aleatoric variance. Inference times are shown for an NVIDIA RTX 2000 Ada Generation Laptop GPU.\label{fig:comparison}](../comparisons/polynomial.png)
 
 
 # References
