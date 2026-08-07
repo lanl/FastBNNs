@@ -35,4 +35,17 @@ FastBNNs provides a Python implementation of a set of recently developed algorit
 By wrapping existing PyTorch-based models, FastBNNs enables fast and flexible BNN training and inference without sacrificing the simplicity, flexibility, and familiarity of PyTorch.
 FastBNNs fills a gap in existing open-source BNN software by simplifying NN-to-BNN conversion and leveraging fast inference algorithms, encouraging further research in and adoption of BNNs.
 
+# Comparison to similar software
+To demonstrate the utility of FastBNNs, we compare predictive performance and approximate runtime for a simple regression problem across a selection of open-source BNN inference software.
+For our comparison, we model data sampled from the function $y = ax + cx^3 + \epsilon (x)$ where $\epsilon (x) \sim \mathcal{N}(\mu=0, \sigma^2=0.1 + 0.2 \cos{(2 \pi x)}^2)$ is heteroscedastic noise.
+We train a 2-layer multilayer perceptron (MLP) with 8 hidden units and a custom, learnable nonlinearity defined by $h(\tilde{x}) = A \tilde{x}^3$, where $\tilde{x} \in \mathbb{R}^8$ is the input feature and $A \in \mathbb{R}^{8 \times 8}$ is learned.
+Training samples are generated for inputs $x \sim \mathcal{U}[-0.5, 0.5]$, while test samples are generated for inputs $x \sim \mathcal{U}[-1.0, 1.0]$ to compare out-of-distribution (O.O.D.) performance to in-distribution performance (I.D.).
+
+We compare FastBNNs to two open-source software packages for BNN inference: laplace-torch [@laplace2021], which implements several variants of the Laplace approximation, of which we use the diagonal (mean-field) Laplace approximation; and bayesian-torch [@krishnan2022bayesiantorch], which implements mean-field Monte Carlo-based inference for common NN layers.
+Visualizations of both I.D. and O.O.D. test-set predictions for each of the trained models are shown in Figure \autoref{fig:comparison}, as well as approximate inference times as measured on an NVIDIA RTX 2000 Ada Generation Laptop GPU.
+The script used to train and evaluate these models is included in the FastBNNs repository at [polynomial.py](https://github.com/lanl/FastBNNs/blob/main/comparisons/polynomial.py).
+
+![Comparison between fastbnns, bayesian-torch, and laplace-torch. Test-set evaluations are made for I.D. and O.O.D. data for models trained using fastbnns, bayesian-torch (with 30 Monte Carlo samples), and laplace-torch (using the diagonal Laplace approximation). Inference times are shown for an NVIDIA RTX 2000 Ada Generation Laptop GPU.\label{fig:comparison}](../comparisons/polynomial.png)
+
+
 # References
