@@ -75,8 +75,8 @@ noise_tform = observation.NoiseTransform(
         "sigma": lambda x: 0.1 + 0.2 * (torch.cos(2.0 * torch.pi * x) ** 2)
     },
 )
-n_data = 1024 * 5
-batch_size = 1024
+n_data = 1024
+batch_size = 128
 ds_train = polynomial.Polynomial(
     data_generator=data_generator,
     dataset_length=n_data,
@@ -84,7 +84,7 @@ ds_train = polynomial.Polynomial(
     cache=True,  # set False to use fresh data every epoch
 )
 dl_train = torch.utils.data.DataLoader(dataset=ds_train, batch_size=batch_size)
-n_data_val = 1024
+n_data_val = 128
 ds_val = polynomial.Polynomial(
     data_generator=data_generator,
     dataset_length=n_data_val,
@@ -162,7 +162,7 @@ for epoch in range(n_epochs_max):
             f"epoch {epoch + 1} of {n_epochs_max}: train mse = {avg_loss_train}, val mse = {avg_loss_val}"
         )
         if stop_early:
-            print(f"Stopping early at epoch {epoch} due to val loss plateau")
+            print(f"Stopping early at epoch {epoch + 1} due to val loss plateau")
             break
 
 nn.load_state_dict(best_model_state_dict_nn)
@@ -285,7 +285,7 @@ for epoch in range(n_epochs_max):
             f"epoch {epoch + 1} of {n_epochs_max}: train -ELBO = {avg_loss_train}, val -ELBO = {avg_loss_val}, {100.0 * torch.mean(torch.stack(within_1sigma_epoch_val)):.2f}% within 1 st. dev."
         )
         if stop_early:
-            print(f"Stopping early at epoch {epoch} due to val loss plateau")
+            print(f"Stopping early at epoch {epoch + 1} due to val loss plateau")
             break
 
 bnn.load_state_dict(best_model_state_dict_fastbnns)
@@ -398,12 +398,12 @@ for epoch in range(n_epochs_max):
             f"epoch {epoch + 1} of {n_epochs_max}: train -ELBO = {avg_loss_train}, val -ELBO = {avg_loss_val}, {100.0 * torch.mean(torch.stack(within_1sigma_epoch_val)):.2f}% within 1 st. dev."
         )
         if stop_early:
-            print(f"Stopping early at epoch {epoch} due to val loss plateau")
+            print(f"Stopping early at epoch {epoch + 1} due to val loss plateau")
             break
 
 bnn_bayestorch.load_state_dict(best_model_state_dict_bayestorch)
 
-# Use laplace-torch to get a BNN from pretrained NN.
+# Use Laplace to get a BNN from pretrained NN.
 prior_precision = 1.0 / prior_sigma**2
 la = laplace.DiagLaplace(
     nn,
@@ -542,7 +542,7 @@ ax[0].plot(
     linestyle="-",
     label="predicted mean",
 )
-ax[0].set_title(f"fastbnns: inference time {t_fastbnns:.2f} s")
+ax[0].set_title(f"FastBNNs: inference time {t_fastbnns:.2f} s")
 ax[0].set_xlabel("input")
 ax[0].set_ylabel("prediction")
 ax[0].set_xlim((x.min(), x.max()))
@@ -568,7 +568,7 @@ y_var_aleatoric_bayestorch = (
 y_var_epistemic_bayestorch = (
     output_bayestorch[1][:, 0].detach().cpu().squeeze()[sort_inds]
 )
-yerr_bayestorch = (y_var_aleatoric_fastbnns + y_var_epistemic_bayestorch).sqrt()
+yerr_bayestorch = (y_var_aleatoric_bayestorch + y_var_epistemic_bayestorch).sqrt()
 ax[1].plot(x, y_gt, color="k", linestyle=":", label="ground truth")
 ax[1].fill_between(
     x=x,
@@ -596,7 +596,7 @@ ax[1].plot(
     linestyle="-",
     label="predicted mean",
 )
-ax[1].set_title(f"bayesian_torch: inference time {t_bayestorch:.2f} s")
+ax[1].set_title(f"Bayesian-Torch: inference time {t_bayestorch:.2f} s")
 ax[1].set_xlabel("input")
 ax[1].set_ylabel("prediction")
 ax[1].set_xlim((x.min(), x.max()))
@@ -637,7 +637,7 @@ ax[2].plot(
     linestyle="-",
     label="predicted mean",
 )
-ax[2].set_title(f"laplace: inference time {t_laplace:.2f} s")
+ax[2].set_title(f"Laplace: inference time {t_laplace:.2f} s")
 ax[2].set_xlabel("input")
 ax[2].set_ylabel("prediction")
 ax[2].set_xlim((x.min(), x.max()))
@@ -649,25 +649,25 @@ plt.close(fig)
 
 # Test set MSEs:
 loss_mse = torch.nn.MSELoss(reduction="mean")
-print(f"test set MSE fastbnns: {loss_mse(input=y_fastbnns, target=observations)}")
+print(f"test set MSE FastBNNs: {loss_mse(input=y_fastbnns, target=observations)}")
 print(
-    f"test set MSE bayesian-torch: {loss_mse(input=y_bayestorch, target=observations)}"
+    f"test set MSE Bayesian-Torch: {loss_mse(input=y_bayestorch, target=observations)}"
 )
-print(f"test set MSE laplace: {loss_mse(input=y_laplace, target=observations)}")
+print(f"test set MSE Laplace: {loss_mse(input=y_laplace, target=observations)}")
 
 # Test set likelihoods:
 loss_gnll = torch.nn.GaussianNLLLoss(reduction="mean")
 print(
-    f"test set GNLL fastbnns: {loss_gnll(input=y_fastbnns, target=observations, var=yerr_fastbnns**2)}"
+    f"test set GNLL FastBNNs: {loss_gnll(input=y_fastbnns, target=observations, var=yerr_fastbnns**2)}"
 )
 print(
-    f"test set GNLL bayesian-torch: {loss_gnll(input=y_bayestorch, target=observations, var=yerr_bayestorch**2)}"
+    f"test set GNLL Bayesian-Torch: {loss_gnll(input=y_bayestorch, target=observations, var=yerr_bayestorch**2)}"
 )
 print(
-    f"test set GNLL laplace: {loss_gnll(input=y_laplace, target=observations, var=yerr_laplace**2)}"
+    f"test set GNLL Laplace: {loss_gnll(input=y_laplace, target=observations, var=yerr_laplace**2)}"
 )
 
 # Time comparisons:
-print(f"inference runtime fastbnns: {t_fastbnns}")
-print(f"inference runtime bayesian-torch: {t_bayestorch}")
-print(f"inference runtime laplace: {t_laplace}")
+print(f"inference runtime FastBNNs: {t_fastbnns}")
+print(f"inference runtime Bayesian-Torch: {t_bayestorch}")
+print(f"inference runtime Laplace: {t_laplace}")
