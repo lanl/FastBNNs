@@ -24,7 +24,7 @@ laplace = [
 comparisons = [
   "curvlinops-for-pytorch<3; python_version < '3.13'",
   "laplace-torch; python_version < '3.13'",
-  "bayesian-torch
+  "bayesian-torch"
 ]
 dev = [
   "pytest", 
