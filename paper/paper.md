@@ -38,8 +38,8 @@ FastBNNs fills a gap in existing open-source BNN software by simplifying NN-to-B
 # Comparison to similar software
 To demonstrate the utility of FastBNNs, we compare predictive performance and approximate runtime for a simple regression problem across a selection of open-source BNN inference software.
 For our comparison, we model data sampled from the function $y = ax + cx^3 + \epsilon (x)$ where $\epsilon (x) \sim \mathcal{N}(\mu=0, \sigma^2=0.1 + 0.2 \cos{(2 \pi x)}^2)$ is heteroscedastic noise.
-We train a 2-layer multilayer perceptron (MLP) with 8 hidden units and a custom, learnable nonlinearity defined by $h(\tilde{x}) = A \tilde{x}^3$, where $\tilde{x} \in \mathbb{R}^8$ is the input feature and $A \in \mathbb{R}^{8 \times 8}$ is learned.
-Training samples are generated for inputs $x \sim \mathcal{U}[-0.5, 0.5]$, while test samples are generated for inputs $x \sim \mathcal{U}[-1.0, 1.0]$ to compare out-of-distribution (O.O.D.) performance to in-distribution performance (I.D.).
+We train a 2-layer multilayer perceptron with 8 hidden units and a custom, learnable nonlinearity defined by $h(\tilde{x}) = A \tilde{x}^3$, where $\tilde{x} \in \mathbb{R}^8$ is the input feature and $A \in \mathbb{R}^{8 \times 8}$ is learned.
+Training samples are generated for inputs $x \sim \mathcal{U}[-0.5, 0.5]$, while test samples are generated for inputs $x \sim \mathcal{U}[-1.0, 1.0]$ to compare out-of-distribution (O.O.D.) performance to in-distribution (I.D.) performance.
 
 We compare FastBNNs to two open-source software packages for BNN inference: Laplace [@laplace2021], which implements several variants of the Laplace approximation, of which we use the diagonal (mean-field) Laplace approximation; and Bayesian-Torch [@krishnan2022bayesiantorch], which implements mean-field Monte Carlo-based inference for common NN layers.
 Visualizations of both I.D. and O.O.D. test-set predictions for each of the trained models are shown in \autoref{fig:comparison}, as well as approximate inference times as measured on an NVIDIA RTX 2000 Ada Generation Laptop GPU.
@@ -48,7 +48,7 @@ The script used to train and evaluate these models is included in the FastBNNs r
 Notably, FastBNNs is faster than sampling-based inference as used in Bayesian-Torch, and for this example and hardware combination, is even faster than the generalized linear model inference used in Laplace.
 Furthermore, although FastBNNs and Bayesian-Torch (and not Laplace) can model heteroscedastic aleatoric uncertainty, Bayesian-Torch is not able to model the parameter distribution of the custom nonlinearity, which may explain the inaccurate uncertainty predictions for the I.D. test set evaluations seen in \autoref{fig:comparison}.
 
-![Comparison between FastBNNs, Bayesian-Torch, and laplace-torch. Test-set evaluations are made for I.D. and O.O.D. data for models trained using FastBNNs, Bayesian-Torch (with 30 Monte Carlo samples), and laplace-torch (using the diagonal Laplace approximation). ``true uncertainty'' is defined as the square root of the sum of observed mean squared error and the simulated aleatoric variance. Inference times are shown for an NVIDIA RTX 2000 Ada Generation Laptop GPU.\label{fig:comparison}](../comparisons/polynomial.png)
+![Comparison between FastBNNs, Bayesian-Torch, and Laplace. Test-set evaluations are made for I.D. and O.O.D. data for models trained using FastBNNs, Bayesian-Torch (with 30 Monte Carlo samples), and Laplace (using the diagonal Laplace approximation). ``true uncertainty'' is defined as the square root of the sum of observed mean squared error and the simulated aleatoric variance. Inference times are shown for an NVIDIA RTX 2000 Ada Generation Laptop GPU.\label{fig:comparison}](../comparisons/polynomial.png)
 
 
 # References
