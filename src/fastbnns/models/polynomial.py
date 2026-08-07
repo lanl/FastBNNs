@@ -4,7 +4,7 @@ from typing import Union
 
 import torch
 
-from bnn import types
+from fastbnns.bnn import types
 
 
 class PolyModule(torch.nn.Module):

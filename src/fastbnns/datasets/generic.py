@@ -5,7 +5,7 @@ from typing import Optional
 
 import torch
 
-from simulation import generators, observation
+from ..simulation import generators, observation
 
 
 class SimulatedData(torch.utils.data.Dataset):

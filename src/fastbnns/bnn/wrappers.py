@@ -3,34 +3,34 @@
 from abc import ABC, abstractmethod
 import copy
 import functools
+import math
 import re
 import sys
 from typing import Any, Optional, Union
 
-import numpy as np
 import torch
 import torch.distributions as dist
 
-import bnn.inference
-from bnn.inference import MomentPropagator
-from bnn.losses import kl_divergence_sampled
-from bnn.priors import Distribution
-from bnn.types import MuVar
+from . import inference
+from .inference import MomentPropagator
+from .losses import kl_divergence_sampled
+from .priors import Distribution
+from .types import MuVar
 
 
 # Define layers that can be applied to input mean and variance without additional
 # processing (e.g., a flatten layer, which only changes the shape of the input).
-BROADCAST = [
+BROADCAST = {
     "ChannelShuffle",
     "Identity",
     "Flatten",
     "Unflatten",
-    *[f"ReflectionPad{n+1}d" for n in range(3)],
-    *[f"ReplicationPad{n+1}d" for n in range(3)],
-    *[f"ZeroPad{n+1}d" for n in range(3)],
-    *[f"ConstantPad{n+1}d" for n in range(3)],
-    *[f"CircularPad{n+1}d" for n in range(3)],
-]
+    *[f"ReflectionPad{n + 1}d" for n in range(3)],
+    *[f"ReplicationPad{n + 1}d" for n in range(3)],
+    *[f"ZeroPad{n + 1}d" for n in range(3)],
+    *[f"ConstantPad{n + 1}d" for n in range(3)],
+    *[f"CircularPad{n + 1}d" for n in range(3)],
+}
 
 
 CURRENT_MODULE = sys.modules[__name__]
@@ -46,20 +46,21 @@ def select_default_propagator(
         is_bayesian: Flag indicating parameters of `module` will be treated
             as distributions.
     """
-    if hasattr(bnn.inference, module.__class__.__name__):
+    if hasattr(inference, module.__class__.__name__):
         # A custom propagator exists for this module so we'll use that.
-        propagator = getattr(bnn.inference, module.__class__.__name__)
+        propagator = getattr(inference, module.__class__.__name__)
         moment_propagator = propagator()
     elif not is_bayesian or (
         len([p for p in module.parameters() if p.requires_grad]) == 0
     ):
         # If this module doesn't have learnable parameters we'll
         # default to the unscented transform.
-        moment_propagator = bnn.inference.UnscentedTransform()
+        moment_propagator = inference.UnscentedTransform()
     else:
-        # With learnable Bayesian parameters, we'll default to
-        # Monte Carlo sampling.
-        moment_propagator = bnn.inference.MonteCarlo()
+        # With learnable Bayesian parameters, we'll default to an unscented transform
+        # that accounts for input distributions and parameter distributions
+        # using the jointly varying sigma points across input and parameter distributions.
+        moment_propagator = inference.JointUnscentedTransform(outer_product=False)
 
     return moment_propagator
 
@@ -68,15 +69,18 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
     """Prepare a list of leaf modules of `model`.
 
     This function filters `module_names` to eliminate the names of parent modules.
-    For example, if we have a model: torch.nn.Module and call [p]
+    For example, if we have a model: torch.nn.Module with named modules
+    m = ["", "module1", "module2", "module1.submodule", "module2.submodule"],
+    isolate_leaf_module_names(m) == ["module1.submodule", "module2.submodule"]
     """
     leaf_names = []
+    module_names.remove("")  # remove root module empty string
     for module in module_names[::-1]:
         # If other modules are a prefix of this modules name, we'll assume they
         # are this modules parent (hence not a leaf module).
         children = []
         for leaf in leaf_names:
-            matches = re.match(f"{module}.*", leaf)
+            matches = re.match(f"{module}\..*", leaf)
             if matches is not None:
                 children.append(matches)
         if len(children) == 0:
@@ -87,58 +91,117 @@ def isolate_leaf_module_names(module_names: list[str]) -> list[str]:
 
 def convert_to_bnn_(
     model: torch.nn.Module,
+    layer_wrappers: dict = {},
+    layer_wrappers_tag: dict = {},
+    layer_wrappers_type: dict = {},
     wrapper_kwargs: dict = {},
+    wrapper_kwargs_tag: dict = {},
+    wrapper_kwargs_type: dict = {},
     wrapper_kwargs_global: dict = {},
-    broadcast_module_tags: Union[list, tuple] = (),
 ) -> None:
     """Convert layers of `model` to Bayesian counterparts.
 
     Args:
         model: Model to be converted to Bayesian counterpart.
+        layer_wrappers: Dictionary of manually-specified wrappers for specific
+            module layers. The keys are names of leaf modules (e.g.,
+            "module1.layer1") and the values are the corresponding wrapper
+            class present in this module (e.g., "BroadcastModule").
+        layer_wrappers_tag: Extends functionality of `layer_wrappers` where
+            keys don't have to be exact layer names but instead can be tags,
+            e.g., {"encoder": "BroadcastModule"} specifies that any
+            submodule in [name for name, _ in model.named_modules()] satisfying
+            `"encoder" in name` will be wrapped with a BroadcastModule.
+        layer_wrappers_type: Extends functionality of `layer_wrappers` where
+            keys are now type names, e.g., {"BatchNorm2d": "BroadcastModule"}
+            specifies that any submodule in [m for m in model.modules()]
+            satisfying `"BatchNorm2d" == type(m).__name__"` will be wrapped
+            with a BroadcastModule.
         wrapper_kwargs: Additional keyword arguments passed to
             initialization of named Bayesian layers.  For example, if `model`
             has a module named "module1", we'll convert "module1" as
             Converter(module1, **wrapper_kwargs["module1"]) where
             Converter is a module converter.
+        wrapper_kwargs_tag: Extends functionality of `wrapper_kwargs` where
+            keys don't have to be exact layer names but instead can be tags,
+            e.g., {"encoder": encoder_kwargs} specifies that any
+            submodule in [name for name, _ in model.named_modules()] satisfying
+            `"encoder" in name` will use `encoder_kwargs` for their wrapper.
+        wrapper_kwargs_type: Extends functionality of `wrapper_kwargs` where
+            keys are now type names, e.g., {"BatchNorm2d": batchnorm_kwargs}
+            specifies that any submodule in [m for m in model.modules()]
+            satisfying `"BatchNorm2d" == type(m).__name__"` will use
+            `batchnorm_kwargs` for their wrapper.
         wrapper_kwargs_global: Keyword arguments that we'll merge
-            with values of bayesian_module_kwargs as, e.g.,
-            Converter(module1, **(wrapper_kwargs_global | wrapper_kwargs["module1"]))
-        broadcast_module_tags: List of strings that, if present in the class
-            name of a module, will indicate the module should be treated as a
-            broadcast module, i.e., apply forward method to mean and variance
-            directly without additional logic.
+            with values of wrapper_kwargs, wrapper_kwargs_tag, and
+            wrapper_kwargs_type as appropriate for each module.
     """
     # Search for modules of `model` to convert, removing stem modules from the
     # list (we just want the leaf modules that contain parameters).
-    module_names = [n for n, _ in model.named_modules()]
-    leaf_names = isolate_leaf_module_names(module_names)
+    modules = {k: v for k, v in model.named_modules()}
+    leaf_names = isolate_leaf_module_names(list(modules.keys()))
 
     # Replace leaf modules with Bayesian counterparts or compatible passthroughs.
     for leaf in leaf_names:
-        module = model.get_submodule(leaf)
-        module_name = module.__class__.__name__
+        module = modules[leaf]
+        module_name = type(module).__name__
 
-        # Prepare module arguments.
-        module_kwargs = wrapper_kwargs_global | wrapper_kwargs.pop(leaf, {})
+        # Prepare module arguments in the following order of priority:
+        #   (1) User-specified kwargs in `wrapper_kwargs`
+        #   (2) User-specified kwargs in `wrapper_kwargs_tag`
+        #   (3) User-specified kwargs in `wrapper_kwargs_type`
+        #   (4) Global default kwargs in `wrapper_kwargs_global`
+        if custom_kwargs := wrapper_kwargs.pop(leaf, {}):
+            pass
+        elif custom_kwargs := [v for k, v in wrapper_kwargs_tag.items() if k in leaf]:
+            # If there are multiple matches we'll just use the first one.
+            custom_kwargs = custom_kwargs[0]
+        elif custom_kwargs := [
+            v for k, v in wrapper_kwargs_type.items() if module_name == k
+        ]:
+            # If there are multiple matches we'll just use the first one.
+            custom_kwargs = custom_kwargs[0]
+        else:
+            custom_kwargs = {}
+        module_kwargs = dict(wrapper_kwargs_global) | dict(custom_kwargs)
 
-        # Search for an appropriate module converter, in the following order of
-        # priority:
-        #   (1) Broadcast layer if tagged by broadcast_module_tags or listed
-        #       in PASSTHROUGH list.
-        #   (2) Named converters if a wrapper exists with the same name as the
-        #       module class.
-        #   (3) BayesianModule
-        if (module_name in BROADCAST) or any(
-            [tag in module_name for tag in broadcast_module_tags]
-        ):
-            # This module can be broadcast along (mu, var) without additional
-            # processing (e.g., a flatten layer, which only changes shapes).
-            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
+        ## Search for an appropriate module converter, in the following order of
+        ## priority:
+        #   (1) User-specified wrapper designated in `layer_wrappers`
+        #   (2) User-specified wrapper designated in `layer_wrappers_tag`
+        #   (3) User-specified wrapper designated in `layer_wrappers_type`
+        #   (4) Named converters if a wrapper exists with the same name as the
+        #       module class
+        #   (5) BroadcastModule if the module class is listed in BROADCAST
+        #   (6) BayesianModule
+
+        if custom_wrapper := layer_wrappers.pop(leaf, None):
+            pass
+        elif custom_wrapper := [v for k, v in layer_wrappers_tag.items() if k in leaf]:
+            # If there are multiple matches we'll just use the first one.
+            custom_wrapper = custom_wrapper[0]
+        elif custom_wrapper := [
+            v for k, v in layer_wrappers_type.items() if module_name == k
+        ]:
+            # If there are multiple matches we'll just use the first one.
+            custom_wrapper = custom_wrapper[0]
+        else:
+            custom_wrapper = None
+
+        if custom_wrapper is not None:
+            # Wrap module in user-specified wrapper.
+            bayesian_layer = getattr(CURRENT_MODULE, custom_wrapper)(
+                module=module, **module_kwargs
+            )
         elif hasattr(CURRENT_MODULE, module_name):
             # If a custom converter exists for this named layer, we'll use that by default.
             bayesian_layer = getattr(CURRENT_MODULE, module_name)(
                 module=module, **module_kwargs
             )
+        elif module_name in BROADCAST:
+            # This module can be broadcast along (mu, var) without additional
+            # processing (e.g., a flatten layer, which only changes shapes).
+            bayesian_layer = BroadcastModule(module=module, **module_kwargs)
         else:
             bayesian_layer = BayesianModule(module=module, **module_kwargs)
 
@@ -154,25 +217,26 @@ def convert_to_nn(
     Args:
         model: Bayesian NN to be converted back to a standard NN.
     """
-    # Search for modules of `model` to convert, removing stem modules from the
-    # list (we just want the leaf modules that contain parameters).
+    # Search for modules of `model` to convert.
     model = copy.deepcopy(bnn)
     module_names = [n for n, _ in model.named_modules()]
-    leaf_names = isolate_leaf_module_names(module_names)
 
     # Remove BNN-specific modules from list.
     bnn_module_names = ["_module_params", "_moment_propagator"]
-    leaf_names = [
-        leaf for leaf in leaf_names if not any([bn in leaf for bn in bnn_module_names])
+    module_names = [
+        m for m in module_names if not any([bn in m for bn in bnn_module_names])
     ]
+
+    # Isolate leaf modules.
+    leaf_names = isolate_leaf_module_names(module_names)
 
     # Replace Bayesian leaf modules with standard counterparts.
     for leaf in leaf_names:
-        # If `leaf` is a named `mu` parameter, we'll reset the module to the `mu` leaf.
+        # If `leaf` is a `_module`, we'll reset the module to the `_module` leaf.
         # If the module is a BroadcastModule, we just need to remove the wrapper.
         module = model.get_submodule(leaf)
         leaf_split = leaf.split(".")
-        if leaf_split[-1] == "mu":
+        if leaf_split[-1] == "_module":
             model.set_submodule(".".join(leaf_split[:-1]), module)
         elif isinstance(module, BroadcastModule):
             model.set_submodule(leaf, module.module)
@@ -279,6 +343,9 @@ class BayesianModule(BayesianModuleBase):
                 parameters (e.g., samplers_init["weight_mean"].rsample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
+                Alternatively, generic samplers can be included with keys "mean"
+                and "rho" to initialize all distributions `means` and `rhos` with
+                the sample samplers.
             resample_mean: Flag indicating parameter means should be resampled using
                 appropriate samplers from `samplers_init` before training. This can
                 be set to False to initialize mean values to parameter values of the
@@ -332,14 +399,22 @@ class BayesianModule(BayesianModuleBase):
             for key, val in _module_params.items():
                 if "_mean" in key:
                     samplers_init[key] = dist.Uniform(
-                        low=-1.0 / np.sqrt(val.shape[-1]),
-                        high=1.0 / np.sqrt(val.shape[-1]),
+                        low=-1.0 / math.sqrt(val.shape[-1]),
+                        high=1.0 / math.sqrt(val.shape[-1]),
                     )
                 else:
                     samplers_init[key] = dist.Uniform(
                         low=-8.0,
                         high=-2.0,
                     )
+        elif ("mean" in samplers_init) and ("rho" in samplers_init):
+            # If generic mean and rho samplers are provided, make copies of them
+            # for each Bayesian parameter.
+            for key, val in _module_params.items():
+                if "_mean" in key:
+                    samplers_init[key] = copy.deepcopy(samplers_init["mean"])
+                else:
+                    samplers_init[key] = copy.deepcopy(samplers_init["rho"])
         self.samplers_init = samplers_init
         self.resample_mean = resample_mean
         if learn_var:
@@ -447,13 +522,10 @@ class BayesianModule(BayesianModuleBase):
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""
         for key, param in self._module_params.items():
-            if param is not None:
+            if (param is not None) and (("mean" not in key) or self.resample_mean):
                 # If this is a parameter mean, verify self.resample_mean flag
                 # before resampling.
-                if ("_mean" not in key) or self.resample_mean:
-                    param.data = self.samplers_init[key].sample(
-                        sample_shape=param.shape
-                    )
+                param.data = self.samplers_init[key].sample(sample_shape=param.shape)
 
     def compute_kl_divergence(
         self, priors: Optional[Union[dict, Distribution]] = None, n_samples: int = 1
@@ -540,7 +612,7 @@ class BroadcastModule(torch.nn.Module):
                 output of the previous layer is a MuVar type, module is
                 simply broadcast across both elements of MuVar.
         """
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.__name__ = module.__class__.__name__
         self.module = module
 
@@ -553,7 +625,11 @@ class BroadcastModule(torch.nn.Module):
         """Forward pass through layer."""
         if isinstance(input, MuVar):
             # Propagate mean and variance through layer.
-            out = MuVar(self.module(input[0]), self.module(input[1]))
+            if input.var is None:
+                # No input variance so we only need to operate on mean.
+                out = MuVar(self.module(input.mu), None)
+            else:
+                out = MuVar(self.module(input.mu), self.module(input.var))
         else:
             # Compute forward pass with a random sample of parameters.
             out = self.module(input)
@@ -564,7 +640,7 @@ class BroadcastModule(torch.nn.Module):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    from bnn.inference import Linear
+    from .inference import Linear
 
     # Basic usage example of BayesianLinear.
     in_features = 3
@@ -578,7 +654,7 @@ if __name__ == "__main__":
     n_samples = 100
     bayesian_linear_mc = BayesianModule(
         module=linear,
-        moment_propagator=bnn.inference.MonteCarlo(n_samples=n_samples),
+        moment_propagator=inference.MonteCarlo(n_samples=n_samples),
     )  # computes moments from Monte Carlo without returning actual samples
     bayesian_linear_mc.load_state_dict(bayesian_linear.state_dict())
 
@@ -604,7 +680,7 @@ if __name__ == "__main__":
         x,
         (
             torch.exp(-0.5 * (x - output_det[0]) ** 2 / output_det[1])
-            / torch.sqrt(2.0 * np.pi * output_det[1])
+            / torch.sqrt(2.0 * torch.pi * output_det[1])
         )
         .detach()
         .cpu()
@@ -615,7 +691,7 @@ if __name__ == "__main__":
         x,
         (
             torch.exp(-0.5 * (x - output_mc[0]) ** 2 / output_mc[1])
-            / torch.sqrt(2.0 * np.pi * output_mc[1])
+            / torch.sqrt(2.0 * torch.pi * output_mc[1])
         )
         .detach()
         .cpu()

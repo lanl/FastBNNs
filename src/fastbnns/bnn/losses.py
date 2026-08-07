@@ -7,7 +7,7 @@ import torch
 import torch.distributions as dist
 from torch.nn.modules.loss import _Loss
 
-from bnn import priors
+from . import priors
 
 
 def kl_divergence_sampled(
@@ -91,7 +91,7 @@ class BNNLoss(ABC, _Loss):
         pass
 
 
-class ELBO(_Loss):
+class ELBO(BNNLoss):
     """Evidence lower bound with scaled KL."""
 
     def __init__(
