@@ -16,6 +16,8 @@ from fastbnns.bnn import base, losses, priors, types
 from fastbnns.datasets import generic
 from fastbnns.simulation import generators, images, observation
 
+torch.manual_seed(1)
+torch.cuda.manual_seed_all(1)
 
 # Create a CNN to predict location of a blob in an image.
 # Use a custom, data-informed activation to demonstrate FastBNNs support for
@@ -46,7 +48,7 @@ nn = torch.nn.Sequential(
 )
 
 # Convert `nn` to a BNN, setting learn_var=False for the custom activation
-wrapper_kwargs = {"4": {"learn_var": False, "resample_mean": False}}
+wrapper_kwargs = {"4": {"learn_var": True, "resample_mean": False}}
 bnn = base.BNN(nn=nn, convert_in_place=False, wrapper_kwargs=wrapper_kwargs)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 bnn = bnn.to(device)
@@ -80,21 +82,21 @@ data_tform = torch.nn.Sequential(
 )
 n_data = 128 * 10
 batch_size = 128
-dataset = generic.SimulatedData(
+ds_train = generic.SimulatedData(
     data_generator=data_generator,
     dataset_length=n_data,
     transform=data_tform,
     cache=False,
 )
-dataloader = torch.utils.data.DataLoader(dataset=dataset, batch_size=batch_size)
+dl_train = torch.utils.data.DataLoader(dataset=ds_train, batch_size=batch_size)
 n_data_val = 128 * 10
-dataset_val = generic.SimulatedData(
+ds_val = generic.SimulatedData(
     data_generator=data_generator,
     dataset_length=n_data_val,
     transform=data_tform,
     cache=True,
 )
-dataloader_val = torch.utils.data.DataLoader(dataset=dataset_val, batch_size=batch_size)
+dl_val = torch.utils.data.DataLoader(dataset=ds_val, batch_size=batch_size)
 
 # Define optimizer and loss.
 n_batches = n_data // batch_size
@@ -115,7 +117,7 @@ for epoch in range(n_epochs):
     loss_epoch_train = []
     within_1sigma_train = []
     bnn.train(True)
-    for batch in dataloader:
+    for batch in dl_train:
         # Forward pass through model.
         optimizer.zero_grad()
         out = bnn(types.MuVar(batch["output"].float().to(device)))
@@ -150,7 +152,7 @@ for epoch in range(n_epochs):
         bnn.eval()
         loss_epoch_val = []
         within_1sigma_val = []
-        for batch in dataloader_val:
+        for batch in dl_val:
             # Forward pass through model.
             out = bnn(types.MuVar(batch["output"].float().to(device)))
 
@@ -192,16 +194,14 @@ xy_sampler_test = images.GridSamples(n_per_pixel=1, im_size=im_size)
 n_data_test = len(xy_sampler_test)
 data_generator_test = copy.deepcopy(data_generator)
 data_generator_test.simulator_kwargs_generator["mu"] = xy_sampler_test
-dataset_test = generic.SimulatedData(
+ds_test = generic.SimulatedData(
     data_generator=data_generator_test,
     dataset_length=n_data_test,
     transform=data_tform,
     cache=True,
 )
-dataloader_test = torch.utils.data.DataLoader(
-    dataset=dataset_test, batch_size=batch_size
-)
-data = next(iter(dataloader_test))
+dl_test = torch.utils.data.DataLoader(dataset=ds_test, batch_size=batch_size)
+data = next(iter(dl_test))
 with torch.no_grad():
     bnn.eval()
     output = bnn(types.MuVar(data["output"].float().to(device)))
@@ -235,9 +235,13 @@ for n in range(n_data_test):
         color=matched_colors[n],
     )
 ax.plot([], "k.", label="ground truth")
-ax.plot([], "ko", markerfacecolor="None", label="predicted +- 1 st. dev.")
+ax.plot([], "ko", markerfacecolor="None", label="predicted mean and standard deviation")
+ax.set_xlabel("x")
+ax.set_ylabel("y")
 ax.set_xlim((-im_size[1] / 2, im_size[1] / 2))
 ax.set_ylim((-im_size[0] / 2, im_size[0] / 2))
-plt.legend()
-plt.show()
-print("done")
+fig.legend()
+fig.savefig("cnn.png", dpi=300, bbox_inches="tight")
+plt.close(fig)
+
+print("Done")

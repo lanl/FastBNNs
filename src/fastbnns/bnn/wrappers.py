@@ -343,6 +343,9 @@ class BayesianModule(BayesianModuleBase):
                 parameters (e.g., samplers_init["weight_mean"].rsample() should
                 return a shape (out_features, in_features) tensor defining
                 initial weight parameters).  Keys should match those in `samplers`.
+                Alternatively, generic samplers can be included with keys "mean"
+                and "rho" to initialize all distributions `means` and `rhos` with
+                the sample samplers.
             resample_mean: Flag indicating parameter means should be resampled using
                 appropriate samplers from `samplers_init` before training. This can
                 be set to False to initialize mean values to parameter values of the
@@ -404,6 +407,14 @@ class BayesianModule(BayesianModuleBase):
                         low=-8.0,
                         high=-2.0,
                     )
+        elif ("mean" in samplers_init) and ("rho" in samplers_init):
+            # If generic mean and rho samplers are provided, make copies of them
+            # for each Bayesian parameter.
+            for key, val in _module_params.items():
+                if "_mean" in key:
+                    samplers_init[key] = copy.deepcopy(samplers_init["mean"])
+                else:
+                    samplers_init[key] = copy.deepcopy(samplers_init["rho"])
         self.samplers_init = samplers_init
         self.resample_mean = resample_mean
         if learn_var:
@@ -511,13 +522,10 @@ class BayesianModule(BayesianModuleBase):
     def reset_parameters(self) -> None:
         """Resample layer parameters from initial distributions."""
         for key, param in self._module_params.items():
-            if param is not None:
+            if (param is not None) and (("mean" not in key) or self.resample_mean):
                 # If this is a parameter mean, verify self.resample_mean flag
                 # before resampling.
-                if ("_mean" not in key) or self.resample_mean:
-                    param.data = self.samplers_init[key].sample(
-                        sample_shape=param.shape
-                    )
+                param.data = self.samplers_init[key].sample(sample_shape=param.shape)
 
     def compute_kl_divergence(
         self, priors: Optional[Union[dict, Distribution]] = None, n_samples: int = 1

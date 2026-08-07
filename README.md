@@ -31,7 +31,7 @@ pip install -r requirements.txt
 
 ## Basic usage
 A neural network `nn: torch.nn.Module` can be converted to a Bayesian neural network using the
-`bnn.base.BNN` wrapper class (see [Caveats and known limitations](#caveats-and-known-limitations) for exceptions):
+`bnn.base.BNN` wrapper class:
 
 ```
 import torch
