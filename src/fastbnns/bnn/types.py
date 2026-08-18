@@ -410,9 +410,9 @@ class MuVar:
             None if self.var is None else self.var[idx],
         )
 
-    def __add__(self, input: float | torch.Tensor | MuVar) -> MuVar:
+    def __add__(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
         """Custom add functionality for MuVar types."""
-        if isinstance(input, (float, torch.Tensor)):
+        if isinstance(input, (int, float, torch.Tensor)):
             # Adding a float or tensor is like adding a delta R.V., so
             # variance does not change.
             return MuVar(self.mu + input, self.var)
@@ -431,7 +431,7 @@ class MuVar:
         else:
             raise NotImplementedError
 
-    def add(self, input: float | torch.Tensor | MuVar) -> MuVar:
+    def add(self, input: int | float | torch.Tensor | MuVar) -> MuVar:
         return self.__add__(input)
 
     def add_(
