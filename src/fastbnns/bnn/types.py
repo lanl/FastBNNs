@@ -582,6 +582,17 @@ class MuVar:
         """Custom matrix multiply functionality for MuVar types."""
         return self.__matmul__(input)
 
+    def __truediv__(self, input: int | float | torch.Tensor) -> MuVar:
+        """Custom division between MuVar and a scalar."""
+        if isinstance(input, (int, float, torch.Tensor)):
+            var = None if self.var is None else self.var / (input**2)
+            return MuVar(self.mu / input, var)
+        else:
+            raise NotImplementedError
+
+    def div(self, input: int | float | torch.Tensor) -> MuVar:
+        return self.__truediv__(input)
+
     def __pow__(self, input: int | float | torch.Tensor) -> MuVar:
         """Custom exponentiation functionality for MuVar types.
 
