@@ -432,9 +432,9 @@ class BayesianModule(BayesianModuleBase):
 
         # Set priors.
         if priors is None:
-            # Default to same distributions as `samplers_init` mean samplers.
+            # Default to a standard Normal prior for each parameter.
             priors = {
-                key: Distribution(samplers_init[key + "_mean"])
+                key: Distribution(dist.Normal(loc=0.0, scale=1.0))
                 for key in samplers.keys()
             }
         self.priors = priors
