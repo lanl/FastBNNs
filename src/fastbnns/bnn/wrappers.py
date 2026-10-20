@@ -1,6 +1,7 @@
 """Collections of Bayesian neural network layers."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 import copy
 import functools
 import math
@@ -244,6 +245,22 @@ def convert_to_nn(
     return model
 
 
+class ConstantSampler:
+    """Sampler that returns a constant tensor."""
+
+    def __init__(self, value: torch.Tensor) -> None:
+        """Initialize sampler.
+
+        Args:
+            value: Constant value returned by sample().
+        """
+        self.value = value
+
+    def sample(self, sample_shape: Optional[Iterable] = None) -> torch.Tensor:
+        """Return the constant value broadcast to `sample_shape`."""
+        return self.value.expand(torch.Size(sample_shape or ()))
+
+
 class BayesianModuleBase(ABC, torch.nn.Module):
     """Abstract base class for Bayesian modules."""
 
@@ -412,13 +429,20 @@ class BayesianModule(BayesianModuleBase):
                         low=-1.0 / math.sqrt(fan_in_curr),
                         high=1.0 / math.sqrt(fan_in_curr),
                     )
-                else:
-                    # This sampling scheme for initializing `rho` parameters is
-                    # a somewhat arbitrary choice observed to work well for
-                    # simple test cases.
+                elif fan_in is None:
+                    # Parameters without a `weight` are given an arbitrary small
+                    # initial variance.
                     samplers_init[key] = dist.Uniform(
                         low=-8.0,
                         high=-2.0,
+                    )
+                else:
+                    # Set initial rho such that the variance matches the variance
+                    # of the default mean initialization in the `if "_mean" in key`
+                    # block above.
+                    sigma_init = 1.0 / math.sqrt(3.0 * fan_in)
+                    samplers_init[key] = ConstantSampler(
+                        BayesianModuleBase.scale_tform_inv(torch.tensor(sigma_init))
                     )
         elif ("mean" in samplers_init) and ("rho" in samplers_init):
             # If generic mean and rho samplers are provided, make copies of them
