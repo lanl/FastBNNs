@@ -396,13 +396,26 @@ class BayesianModule(BayesianModuleBase):
         if samplers_init is None:
             # Prepare (relatively arbitrary) default samplers.
             samplers_init = {}
+            weight = getattr(module, "weight", None)
+            fan_in = (
+                torch.nn.init._calculate_fan_in_and_fan_out(weight)[0]
+                if isinstance(weight, torch.Tensor) and weight.dim() >= 2
+                else None
+            )
             for key, val in _module_params.items():
                 if "_mean" in key:
+                    # Use the fan-in of the layer's weight, as torch's default
+                    # init does, for all mean parameters. Fallback to shape[-1]
+                    # fan-in when not defined.
+                    fan_in_curr = val.shape[-1] if fan_in is None else fan_in
                     samplers_init[key] = dist.Uniform(
-                        low=-1.0 / math.sqrt(val.shape[-1]),
-                        high=1.0 / math.sqrt(val.shape[-1]),
+                        low=-1.0 / math.sqrt(fan_in_curr),
+                        high=1.0 / math.sqrt(fan_in_curr),
                     )
                 else:
+                    # This sampling scheme for initializing `rho` parameters is
+                    # a somewhat arbitrary choice observed to work well for
+                    # simple test cases.
                     samplers_init[key] = dist.Uniform(
                         low=-8.0,
                         high=-2.0,
