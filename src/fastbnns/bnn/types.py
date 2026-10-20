@@ -488,7 +488,7 @@ class MuVar:
 
     def __rsub__(self, input: int | float | torch.Tensor) -> MuVar:
         """Custom subtract functionality for MuVar types."""
-        return self.__sub__(input)
+        return MuVar(input - self.mu, self.var)
 
     def sub_(
         self,
@@ -558,7 +558,7 @@ class MuVar:
             if self.var is None:
                 return MuVar(input @ self.mu, None)
             else:
-                return MuVar(input @ self.mu, input @ self.var @ input.T)
+                return MuVar(input @ self.mu, (input**2) @ self.var)
         elif isinstance(input, (list, MuVar)):
             # Multiplication of two random independent variables:
             #   E[X@Y] = E[X] @ E[Y]
@@ -675,12 +675,14 @@ class MuVar:
         else:
             if (args == ()) and (kwargs == {}):
                 x_var = self.var.mean()
-                x_var /= self.var.numel() ** 2
+                x_var /= self.var.numel()
             else:
                 x_var = self.var.mean(*args, **(kwargs | {"keepdim": True}))
                 x_var /= (
-                    torch.tensor(self.var.shape) / torch.tensor(x_var.shape)
-                ).prod().squeeze() ** 2
+                    (torch.tensor(self.var.shape) / torch.tensor(x_var.shape))
+                    .prod()
+                    .squeeze()
+                )
         if kwargs.pop("keepdim", None) is None:
             return MuVar(x_mean, x_var)
         else:

@@ -1,6 +1,7 @@
 """Collections of Bayesian neural network layers."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 import copy
 import functools
 import math
@@ -244,6 +245,22 @@ def convert_to_nn(
     return model
 
 
+class ConstantSampler:
+    """Sampler that returns a constant tensor."""
+
+    def __init__(self, value: torch.Tensor) -> None:
+        """Initialize sampler.
+
+        Args:
+            value: Constant value returned by sample().
+        """
+        self.value = value
+
+    def sample(self, sample_shape: Optional[Iterable] = None) -> torch.Tensor:
+        """Return the constant value broadcast to `sample_shape`."""
+        return self.value.expand(torch.Size(sample_shape or ()))
+
+
 class BayesianModuleBase(ABC, torch.nn.Module):
     """Abstract base class for Bayesian modules."""
 
@@ -396,16 +413,36 @@ class BayesianModule(BayesianModuleBase):
         if samplers_init is None:
             # Prepare (relatively arbitrary) default samplers.
             samplers_init = {}
+            weight = getattr(module, "weight", None)
+            fan_in = (
+                torch.nn.init._calculate_fan_in_and_fan_out(weight)[0]
+                if isinstance(weight, torch.Tensor) and weight.dim() >= 2
+                else None
+            )
             for key, val in _module_params.items():
                 if "_mean" in key:
+                    # Use the fan-in of the layer's weight, as torch's default
+                    # init does, for all mean parameters. Fallback to shape[-1]
+                    # fan-in when not defined.
+                    fan_in_curr = val.shape[-1] if fan_in is None else fan_in
                     samplers_init[key] = dist.Uniform(
-                        low=-1.0 / math.sqrt(val.shape[-1]),
-                        high=1.0 / math.sqrt(val.shape[-1]),
+                        low=-1.0 / math.sqrt(fan_in_curr),
+                        high=1.0 / math.sqrt(fan_in_curr),
                     )
-                else:
+                elif fan_in is None:
+                    # Parameters without a `weight` are given an arbitrary small
+                    # initial variance.
                     samplers_init[key] = dist.Uniform(
                         low=-8.0,
                         high=-2.0,
+                    )
+                else:
+                    # Set initial rho such that the variance matches the variance
+                    # of the default mean initialization in the `if "_mean" in key`
+                    # block above.
+                    sigma_init = 1.0 / math.sqrt(3.0 * fan_in)
+                    samplers_init[key] = ConstantSampler(
+                        BayesianModuleBase.scale_tform_inv(torch.tensor(sigma_init))
                     )
         elif ("mean" in samplers_init) and ("rho" in samplers_init):
             # If generic mean and rho samplers are provided, make copies of them
@@ -432,9 +469,9 @@ class BayesianModule(BayesianModuleBase):
 
         # Set priors.
         if priors is None:
-            # Default to same distributions as `samplers_init` mean samplers.
+            # Default to a standard Normal prior for each parameter.
             priors = {
-                key: Distribution(samplers_init[key + "_mean"])
+                key: Distribution(dist.Normal(loc=0.0, scale=1.0))
                 for key in samplers.keys()
             }
         self.priors = priors
