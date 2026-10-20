@@ -558,7 +558,7 @@ class MuVar:
             if self.var is None:
                 return MuVar(input @ self.mu, None)
             else:
-                return MuVar(input @ self.mu, input @ self.var @ input.T)
+                return MuVar(input @ self.mu, (input**2) @ self.var)
         elif isinstance(input, (list, MuVar)):
             # Multiplication of two random independent variables:
             #   E[X@Y] = E[X] @ E[Y]
