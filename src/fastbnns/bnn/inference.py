@@ -196,7 +196,7 @@ class JointUnscentedTransform(MomentPropagator):
         self,
         sigma_scale: Optional[float | torch.Tensor] = None,
         sigma_weights: Optional[list[float] | tuple[float, ...] | torch.Tensor] = None,
-        outer_product: bool = False,
+        outer_product: bool = True,
     ):
         """Initializer for JointUnscentedTransform inference module.
 
