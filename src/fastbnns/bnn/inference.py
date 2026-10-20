@@ -834,7 +834,7 @@ class LeakyReLUa(MomentPropagator):
             var = None
         else:
             # Compute the mean of the output assuming input independent normal random variables.
-            l = -module._module.negative_slope
+            l = module._module.negative_slope
             s_input = input.var.sqrt()
             alpha = torch.clamp(-input.mu / s_input, min=-3.0, max=3.0)
             phi = 0.5 * (1.0 + torch.erf(alpha / math.sqrt(2.0)))  # P(input<0)
