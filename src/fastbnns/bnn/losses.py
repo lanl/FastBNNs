@@ -16,7 +16,7 @@ def kl_divergence_sampled(
     """KL divergence KL(dist0||dist1) approximated by Monte Carlo sampling."""
     kl_divergence = []
     for _ in range(n_samples):
-        sample = dist0.sample()
+        sample = dist0.rsample()
         kl_divergence.append(dist0.log_prob(sample) - dist1.log_prob(sample))
 
     return torch.stack(kl_divergence).mean(dim=0)
